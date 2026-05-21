@@ -1,0 +1,15 @@
+__tests__/
+example/
+coverage/
+*.log
+.gitignore
+.eslintrc*
+.prettierrc*
+babel.config.js
+jest.config.js
+tsconfig.json
+tsconfig.build.json
+.github/
+node_modules/
+src/**/*.test.ts
+src/**/*.test.tsx
