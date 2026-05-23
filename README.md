@@ -106,13 +106,18 @@ const sub = QuickAuth.auth.observeOTP((code) => {
 });
 
 // 4. Verify
-const result = await QuickAuth.auth.verifyOTP({
+const { verified, requestId } = await QuickAuth.auth.verifyOTP({
   sessionId: session.sessionId,
   code: '123456',
 });
 sub.remove();
 
-// 5. Track conversion
+// 5. Forward `requestId` to YOUR backend, which confirms with QuickAuth
+//    via GET /v1/auth/status?requestId=... and mints its own session JWT.
+//    QuickAuth is verification-only — your backend owns the session.
+//    See https://quickauth.in/docs/backend
+
+// 6. Track conversion
 await QuickAuth.attribution.trackConversion({
   event: 'signup',
   value: 0,

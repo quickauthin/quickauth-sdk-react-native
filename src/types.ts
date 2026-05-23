@@ -65,11 +65,24 @@ export interface OtpVerifyParams {
   code: string;
 }
 
+/**
+ * Result of {@link verifyOTP}.
+ *
+ * QuickAuth is a verification provider, not an identity provider. We tell
+ * you whether the phone was verified — you forward {@link requestId} to
+ * your own backend, which confirms server-to-server via
+ * `GET /v1/auth/status?requestId=...` (with X-Client-Id / X-Client-Secret)
+ * and mints its own session JWT against its own user table.
+ *
+ * See https://quickauth.in/docs/backend
+ */
 export interface OtpVerifyResult {
-  success: boolean;
-  jwt?: string;
-  userId?: string;
-  phone?: string;
+  /** True iff the OTP matched and the phone is now verified. */
+  verified: boolean;
+  /** Opaque id — forward this to your backend for server-to-server confirmation. */
+  requestId: string;
+  /** Human-readable status, e.g. "Verified successfully". */
+  message: string;
 }
 
 export interface WhatsAppLoginParams {
