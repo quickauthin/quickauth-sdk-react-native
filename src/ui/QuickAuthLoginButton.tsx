@@ -26,7 +26,13 @@ export interface QuickAuthLoginButtonProps {
   /** Pre-existing session ID from a prior startOTP() call. */
   sessionId?: string;
   onSessionStarted?: (sessionId: string) => void;
-  onSuccess?: (jwt: string | undefined) => void;
+  /**
+   * Called when verification succeeds. Receives the QuickAuth `requestId` —
+   * forward it to your backend, which confirms server-to-server via
+   * `GET /v1/auth/status?requestId=...` and mints its own session JWT.
+   * See https://quickauth.in/docs/backend
+   */
+  onSuccess?: (requestId: string) => void;
   onError?: (error: Error) => void;
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
@@ -61,8 +67,8 @@ export function QuickAuthLoginButton(props: QuickAuthLoginButtonProps): React.Re
     try {
       if (code && sessionId) {
         const result = await verifyOTP({ sessionId, code });
-        if (!result.success) throw new Error('Verification failed');
-        onSuccess?.(result.jwt);
+        if (!result.verified) throw new Error(result.message || 'Verification failed');
+        onSuccess?.(result.requestId);
       } else {
         const session = await startOTP({ phone, channel });
         onSessionStarted?.(session.sessionId);

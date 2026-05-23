@@ -81,14 +81,13 @@ describe('auth/otp', () => {
       status: 200,
       statusText: 'OK',
       text: async () =>
-        JSON.stringify({ success: true, jwt: 'token123', user_id: 'u_1', phone: '+919876543210' }),
+        JSON.stringify({ verified: true, requestId: 'req_abc', message: 'Verified successfully' }),
     });
     const result = await verifyOTP({ sessionId: 's_1', code: '123456' });
     expect(result).toEqual({
-      success: true,
-      jwt: 'token123',
-      userId: 'u_1',
-      phone: '+919876543210',
+      verified: true,
+      requestId: 'req_abc',
+      message: 'Verified successfully',
     });
     const [, opts] = (global.fetch as jest.Mock).mock.calls[0];
     expect(opts.headers.Authorization).toMatch(/^Bearer /);

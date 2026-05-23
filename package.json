@@ -1,6 +1,6 @@
 {
   "name": "@quickauth/react-native",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "QuickAuth React Native SDK — phone OTP authentication and WhatsApp marketing attribution",
   "homepage": "https://quickauth.in",
   "repository": {

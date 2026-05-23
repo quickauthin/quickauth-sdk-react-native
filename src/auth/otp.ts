@@ -19,10 +19,12 @@ interface InitiateResponse {
 }
 
 interface VerifyResponse {
-  success: boolean;
-  jwt?: string;
-  user_id?: string;
-  phone?: string;
+  // Matches /v1/sdk/auth/verify on the QuickAuth backend (SdkOtpVerifyResponse
+  // record). Verification-only — no JWT here. Merchants confirm via
+  // GET /v1/auth/status?requestId=... from their own backend.
+  verified: boolean;
+  requestId: string;
+  message: string;
 }
 
 function normalizePhone(phone: string): string {
@@ -65,13 +67,12 @@ export async function verifyOTP(params: OtpVerifyParams): Promise<OtpVerifyResul
   const res = await request<VerifyResponse>({
     method: 'POST',
     path: '/v1/sdk/auth/verify',
-    body: { session_id: params.sessionId, code: params.code },
+    body: { sessionId: params.sessionId, code: params.code },
   });
   return {
-    success: !!res.success,
-    jwt: res.jwt,
-    userId: res.user_id,
-    phone: res.phone,
+    verified: !!res.verified,
+    requestId: res.requestId,
+    message: res.message,
   };
 }
 
