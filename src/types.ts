@@ -15,6 +15,49 @@ export enum OtpChannel {
  */
 export type TokenProvider = () => Promise<string>;
 
+/**
+ * One callback for the entire auth lifecycle. Pass at `init()`.
+ */
+export type AuthEventHandler = (event: AuthEvent) => void;
+
+/**
+ * Typed auth lifecycle events. The SDK guarantees that for any given
+ * `initiate()` call, you'll see at most one terminal event
+ * (`VERIFIED` / `OTP_FAILED` / `ERROR`) for that attempt. Calling
+ * `initiate()` again resets the state machine.
+ *
+ * - `OTP_SENT` — backend dispatched an OTP. Render the input.
+ * - `OTP_AUTO_READ` — SMS auto-read (Android Retriever). SDK does NOT
+ *   auto-submit; merchant decides whether to.
+ * - `VERIFIED` — user is authenticated. Covers fresh OTP success AND silent
+ *   device-trust re-auth. Forward `requestId` to the merchant backend.
+ * - `OTP_FAILED` — submitted code was rejected. SDK stays in awaiting-OTP
+ *   so the user can retry.
+ * - `ERROR` — transport / rate-limit / unexpected failure. Final.
+ */
+export type AuthEvent =
+  | { type: 'OTP_SENT'; sessionId: string; channel: OtpChannel; expiresIn: number }
+  | { type: 'OTP_AUTO_READ'; code: string }
+  | { type: 'VERIFIED'; requestId: string; message?: string }
+  | { type: 'OTP_FAILED'; message: string }
+  | { type: 'ERROR'; code: string; message: string };
+
+export interface InitiateOptions {
+  /** E.164 phone number, e.g. `+919876543210`. */
+  phone: string;
+  /** Delivery channel preference. Server picks if omitted or `auto`. */
+  channel?: OtpChannel;
+}
+
+export interface ResetOptions {
+  /**
+   * Also clear the persistent device token. After reset, the next
+   * `initiate()` acts like a brand-new install (no OneTap). Use on
+   * user-initiated sign-out.
+   */
+  forgetDevice?: boolean;
+}
+
 export interface QuickAuthConfig {
   /** Override API base URL — defaults to https://api.quickauth.in */
   apiBaseUrl?: string;
@@ -41,48 +84,13 @@ export interface QuickAuthConfig {
   requestTimeoutMs?: number;
   /** Suppress console warnings. */
   silent?: boolean;
-}
-
-export interface OtpStartParams {
-  phone: string;
-  channel?: OtpChannel;
-  /** Optional locale hint passed to provider templates. */
-  locale?: string;
-  /** Caller-supplied metadata persisted on the auth session. */
-  metadata?: Record<string, unknown>;
-}
-
-export interface OtpSession {
-  sessionId: string;
-  channel: OtpChannel;
-  expiresAt: string;
-  /** Android SMS Retriever app-hash echoed by backend. */
-  smsRetrieverHash?: string;
-}
-
-export interface OtpVerifyParams {
-  sessionId: string;
-  code: string;
-}
-
-/**
- * Result of {@link verifyOTP}.
- *
- * QuickAuth is a verification provider, not an identity provider. We tell
- * you whether the phone was verified — you forward {@link requestId} to
- * your own backend, which confirms server-to-server via
- * `GET /v1/auth/status?requestId=...` (with X-Client-Id / X-Client-Secret)
- * and mints its own session JWT against its own user table.
- *
- * See https://quickauth.in/docs/backend
- */
-export interface OtpVerifyResult {
-  /** True iff the OTP matched and the phone is now verified. */
-  verified: boolean;
-  /** Opaque id — forward this to your backend for server-to-server confirmation. */
-  requestId: string;
-  /** Human-readable status, e.g. "Verified successfully". */
-  message: string;
+  /**
+   * Headless auth event handler. The SDK invokes this with a typed
+   * `AuthEvent` as the auth lifecycle progresses. One handler per init;
+   * pass a new value to a subsequent `QuickAuth.init({ onAuthEvent })`
+   * to replace.
+   */
+  onAuthEvent?: AuthEventHandler;
 }
 
 export interface WhatsAppLoginParams {

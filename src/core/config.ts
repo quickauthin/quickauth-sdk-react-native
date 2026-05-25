@@ -1,4 +1,4 @@
-import type { QuickAuthConfig, TokenProvider } from '../types';
+import type { AuthEventHandler, QuickAuthConfig, TokenProvider } from '../types';
 
 export type { TokenProvider };
 
@@ -10,6 +10,7 @@ export interface ResolvedConfig {
   maxRetries: number;
   requestTimeoutMs: number;
   silent: boolean;
+  onAuthEvent: AuthEventHandler | null;
 }
 
 const DEFAULTS = {
@@ -63,6 +64,7 @@ export function setConfig(input: QuickAuthConfig): ResolvedConfig {
     maxRetries: input.maxRetries ?? DEFAULTS.maxRetries,
     requestTimeoutMs: input.requestTimeoutMs ?? DEFAULTS.requestTimeoutMs,
     silent: input.silent ?? DEFAULTS.silent,
+    onAuthEvent: typeof input.onAuthEvent === 'function' ? input.onAuthEvent : null,
   };
   return current;
 }

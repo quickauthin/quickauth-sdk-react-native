@@ -9,7 +9,7 @@ import {
   type ViewStyle,
   type TextStyle,
 } from 'react-native';
-import { startOTP, verifyOTP } from '../auth/otp';
+import { initiate, submitOtp } from '../auth/otp';
 import { OtpChannel } from '../types';
 import { colors, radius, spacing, typography } from './theme';
 
@@ -18,21 +18,18 @@ export interface QuickAuthLoginButtonProps {
   channel?: OtpChannel;
   text?: string;
   /**
-   * Optional pre-filled OTP code; when provided, the button skips startOTP and
-   * jumps straight to verifyOTP(). Most apps will let the SDK handle the full
-   * flow internally with their own custom <QuickAuthOtpField/>.
+   * Optional pre-filled OTP code. When provided, the button calls
+   * `submitOtp(code)` instead of `initiate()` — useful when the user has
+   * just typed a code into your own OTP input and you want to submit it.
+   * Outcomes (`OTP_SENT`, `VERIFIED`, `OTP_FAILED`, `ERROR`) arrive via
+   * `Config.onAuthEvent`.
    */
   code?: string;
-  /** Pre-existing session ID from a prior startOTP() call. */
-  sessionId?: string;
-  onSessionStarted?: (sessionId: string) => void;
   /**
-   * Called when verification succeeds. Receives the QuickAuth `requestId` —
-   * forward it to your backend, which confirms server-to-server via
-   * `GET /v1/auth/status?requestId=...` and mints its own session JWT.
-   * See https://quickauth.in/docs/backend
+   * Called once the network call dispatched. Use `Config.onAuthEvent`
+   * to react to the actual outcome.
    */
-  onSuccess?: (requestId: string) => void;
+  onInitiated?: () => void;
   onError?: (error: Error) => void;
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
@@ -40,9 +37,9 @@ export interface QuickAuthLoginButtonProps {
 }
 
 /**
- * Default action: tapping the button calls startOTP() and emits onSessionStarted.
- * If you also provide `code` (e.g., user filled the OTP field), the second tap
- * verifies and emits onSuccess.
+ * Headless flow trigger. Tapping the button dispatches `initiate()` (or
+ * `submitOtp(code)` if a code prop is provided). The merchant subscribes
+ * to `Config.onAuthEvent` to drive UI from the resulting events.
  */
 export function QuickAuthLoginButton(props: QuickAuthLoginButtonProps): React.ReactElement {
   const {
@@ -50,9 +47,7 @@ export function QuickAuthLoginButton(props: QuickAuthLoginButtonProps): React.Re
     channel = OtpChannel.AUTO,
     text = 'Continue',
     code,
-    sessionId,
-    onSessionStarted,
-    onSuccess,
+    onInitiated,
     onError,
     style,
     textStyle,
@@ -65,20 +60,18 @@ export function QuickAuthLoginButton(props: QuickAuthLoginButtonProps): React.Re
     if (loading || disabled) return;
     setLoading(true);
     try {
-      if (code && sessionId) {
-        const result = await verifyOTP({ sessionId, code });
-        if (!result.verified) throw new Error(result.message || 'Verification failed');
-        onSuccess?.(result.requestId);
+      if (code) {
+        await submitOtp(code);
       } else {
-        const session = await startOTP({ phone, channel });
-        onSessionStarted?.(session.sessionId);
+        await initiate({ phone, channel });
+        onInitiated?.();
       }
     } catch (e) {
       onError?.(e as Error);
     } finally {
       setLoading(false);
     }
-  }, [loading, disabled, code, sessionId, phone, channel, onSessionStarted, onSuccess, onError]);
+  }, [loading, disabled, code, phone, channel, onInitiated, onError]);
 
   return (
     <Pressable

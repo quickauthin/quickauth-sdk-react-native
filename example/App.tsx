@@ -55,10 +55,7 @@ export default function App(): React.ReactElement {
             phone={phone}
             channel={OtpChannel.AUTO}
             text="Send OTP"
-            onSessionStarted={(s) => {
-              setSessionId(s);
-              setError(null);
-            }}
+            onInitiated={() => setError(null)}
             onError={(e) => setError(e.message)}
             style={{ marginTop: 16 }}
           />
@@ -72,17 +69,9 @@ export default function App(): React.ReactElement {
               autoFillFromSms
               onCodeFilled={async (filled) => {
                 try {
-                  const r = await QuickAuth.auth.verifyOTP({ sessionId, code: filled });
-                  if (r.success) {
-                    setJwt(r.jwt ?? null);
-                    await QuickAuth.attribution.trackConversion({
-                      event: 'signup',
-                      value: 0,
-                      currency: 'INR',
-                    });
-                  } else {
-                    setError('Verification failed');
-                  }
+                  await QuickAuth.auth.submitOtp(filled);
+                  // Outcome arrives via Config.onAuthEvent — when VERIFIED
+                  // fires, route to the post-login screen there.
                 } catch (e) {
                   setError((e as Error).message);
                 }
