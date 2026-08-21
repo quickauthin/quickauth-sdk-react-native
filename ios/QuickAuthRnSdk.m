@@ -26,6 +26,14 @@ RCT_EXPORT_METHOD(getAppHash:(RCTPromiseResolveBlock)resolve
   resolve(@"");
 }
 
+// iOS bundle identifier, used to app-lock a publishable key server-side.
+// Resolves an empty string instead of rejecting: a missing identity must
+// degrade to an omitted header, never fail the auth request that needed it.
+RCT_EXPORT_METHOD(getAppIdentity:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject) {
+  resolve([[NSBundle mainBundle] bundleIdentifier] ?: @"");
+}
+
 // Required for NativeEventEmitter on RN >= 0.65.
 RCT_EXPORT_METHOD(addListener:(NSString *)eventName) {}
 RCT_EXPORT_METHOD(removeListeners:(double)count) {}

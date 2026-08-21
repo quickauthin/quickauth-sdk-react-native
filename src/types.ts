@@ -64,8 +64,23 @@ export interface QuickAuthConfig {
   /**
    * Async callback invoked by the SDK whenever it needs a fresh session token.
    * The SDK calls this on first request, ~30s before token expiry, and on a 401.
+   *
+   * Exactly one of `onTokenExpiry` or `publishableKey` must be supplied.
    */
   onTokenExpiry?: TokenProvider;
+  /**
+   * Publishable key (`pk_live_…` / `pk_test_…`) — the in-app-safe credential
+   * for the zero-backend auth mode.
+   *
+   * Unlike the client **secret**, a publishable key is *designed* to ship
+   * inside the app: on the backend it is scoped to OTP initiate/verify only,
+   * locked to your registered app identity (Android package / iOS bundle /
+   * web origin), and rate-limited. When set, the SDK sends it as
+   * `X-QuickAuth-Key` and never mints or attaches a session token.
+   *
+   * Exactly one of `onTokenExpiry` or `publishableKey` must be supplied.
+   */
+  publishableKey?: string;
   /** Optional pre-warmed token used for the very first request. */
   initialToken?: string;
   /**

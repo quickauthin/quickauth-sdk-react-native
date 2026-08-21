@@ -38,6 +38,7 @@ export const NativeModules: Record<string, unknown> = {
     start: jest.fn().mockResolvedValue(undefined),
     stop: jest.fn().mockResolvedValue(undefined),
     getAppHash: jest.fn().mockResolvedValue('TEST12HASH'),
+    getAppIdentity: jest.fn().mockResolvedValue('com.example.quickauthdemo'),
     addListener: jest.fn(),
     removeListeners: jest.fn(),
     __emit: (payload: unknown) => smsEmitter.emit('qa.sms.code', payload),

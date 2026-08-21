@@ -146,28 +146,24 @@ describe('core/client — request() bearer auth', () => {
     });
     setConfig({ onTokenExpiry: provider });
 
-    (global.fetch as jest.Mock)
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 401,
-        statusText: 'Unauthorized',
-        text: async () => '{"error":"expired"}',
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        text: async () => '{"ok":true}',
-      });
+    // The retry mutates one shared headers object, so Authorization has to be
+    // snapshotted per call rather than read off mock.calls afterwards.
+    const auths: string[] = [];
+    const bodies = [
+      { ok: false, status: 401, statusText: 'Unauthorized', text: async () => '{"error":"expired"}' },
+      { ok: true, status: 200, statusText: 'OK', text: async () => '{"ok":true}' },
+    ];
+    let call = 0;
+    global.fetch = jest.fn(async (_url: string, opts: { headers: Record<string, string> }) => {
+      auths.push(opts.headers.Authorization!);
+      return bodies[Math.min(call++, bodies.length - 1)];
+    }) as unknown as jest.Mock;
 
     const out = await request<{ ok: boolean }>({ method: 'POST', path: '/v1/test', body: {} });
     expect(out.ok).toBe(true);
     expect(provider).toHaveBeenCalledTimes(2);
     expect((global.fetch as jest.Mock).mock.calls.length).toBe(2);
-
-    const firstAuth = (global.fetch as jest.Mock).mock.calls[0][1].headers.Authorization;
-    const secondAuth = (global.fetch as jest.Mock).mock.calls[1][1].headers.Authorization;
-    expect(firstAuth).not.toBe(secondAuth);
+    expect(auths[0]).not.toBe(auths[1]);
   });
 
   it('does not infinitely loop on persistent 401', async () => {

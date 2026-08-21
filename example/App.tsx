@@ -23,7 +23,7 @@ export default function App(): React.ReactElement {
 
   useEffect(() => {
     (async () => {
-      await QuickAuth.init({ publicKey: 'qa_pk_test_REPLACE_ME' });
+      await QuickAuth.init({ publishableKey: 'pk_test_REPLACE_ME' });
       QuickAuth.consent.set(true); // assume in-app consent dialog has run
       const attribution = await QuickAuth.attribution.captureLaunch();
       // eslint-disable-next-line no-console
