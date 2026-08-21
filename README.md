@@ -6,7 +6,7 @@ Phone OTP authentication + WhatsApp marketing attribution for React Native.
 - Android SMS auto-read via Google Play **SMS Retriever** (no `READ_SMS` permission)
 - iOS OTP autofill via native `textContentType="oneTimeCode"` — zero config
 - WhatsApp deep-link login via `Linking`
-- Attribution capture from launch URL (`utm_*`, `qa_click_id`, `gclid`, `fbclid`, …)
+- Attribution capture from launch URL (`utm_*`, `qa_clid`, `gclid`, `fbclid`, …)
 - Lightweight device fingerprint (no `react-native-device-info` dependency)
 - Conversion tracking gated by user consent (DPDP / GDPR)
 - **Two usage modes**: headless API and drop-in components
@@ -21,7 +21,7 @@ cd ios && pod install
 
 The native module is auto-linked via React Native CLI ≥ 0.60.
 
-### Optional: persist publicKey across launches
+### Optional: persist attribution across launches
 
 ```bash
 npm install @react-native-async-storage/async-storage
@@ -29,7 +29,28 @@ npm install @react-native-async-storage/async-storage
 
 If `@react-native-async-storage/async-storage` is installed, the SDK uses it; otherwise it falls back to in-memory storage. Both work — the only difference is whether attribution survives a cold launch.
 
-## Auth model — ephemeral session tokens
+## Auth model
+
+Pick exactly one auth mode at `init()`:
+
+| Mode | Config | When |
+| ---- | ------ | ---- |
+| Publishable key | `publishableKey: 'pk_live_…'` | Zero-backend quick start |
+| Session token | `onTokenExpiry: async () => …` | You want server-minted, short-lived tokens |
+
+Passing neither — or both — throws at `init()`.
+
+### Publishable key (zero-backend)
+
+```ts
+await QuickAuth.init({ publishableKey: 'pk_live_…' });
+```
+
+A publishable key is designed to ship inside the binary: on the backend it is scoped to OTP initiate/verify only, locked to your registered app identity, and rate-limited. The SDK sends it as `X-QuickAuth-Key` and never mints or attaches a session token.
+
+To support that app-locking, the SDK also sends the host app's identity — `X-QuickAuth-Package: <applicationId>` on Android, `X-QuickAuth-Bundle: <bundleIdentifier>` on iOS. This is strictly best-effort: if the identity cannot be read the header is omitted and the request still goes out, because a missing header must never fail the OTP a user is waiting on.
+
+### Session tokens (extra-hardened)
 
 QuickAuth never wants your `client_secret` shipped in a mobile binary. Instead, your **own backend** mints a short-lived (10-minute) session JWT, and the SDK uses it as a `Bearer` token. When the token is about to expire, the SDK calls your `onTokenExpiry` async callback to get a new one. Same pattern as Twilio Verify, Stripe, etc.
 
@@ -158,7 +179,8 @@ import {
 
 ```ts
 QuickAuth.init({
-  onTokenExpiry,    // async () => Promise<string> — REQUIRED for production
+  publishableKey,   // 'pk_live_…' — zero-backend mode
+  onTokenExpiry,    // async () => Promise<string> — session-token mode; exactly one of the two
   initialToken?,    // optional pre-warmed token for the very first request
   unsafe?,          // { clientId, clientSecret } — trusted-enterprise only
   apiBaseUrl?,
@@ -206,7 +228,7 @@ The dashboard's SMS template editor lets you paste this hash so customer-facing 
 | POST   | `/v1/sdk/attribution/launch`      | Record launch URL + fp                             |
 | POST   | `/v1/sdk/attribution/conversion`  | Record a conversion event                          |
 
-Every authenticated POST sends `Authorization: Bearer <sessionToken>` plus an `Idempotency-Key` header. 5xx responses (and 408 / 429) retry up to `maxRetries` times with 1-2-4-second backoff; 4xx responses fail fast. A `401` triggers a single token-refresh + retry.
+Every authenticated POST sends either `X-QuickAuth-Key: <publishableKey>` (plus the app identity header) or `Authorization: Bearer <sessionToken>`, along with an `Idempotency-Key` header. 5xx responses and `408` retry up to `maxRetries` times with 1-2-4-second backoff; every other 4xx fails fast. **`429` is never retried** — the backend has already told us it is over capacity for this caller, so backing off blindly into it only adds load; honour the limit and surface the error. A `401` triggers a single token-refresh and replays the *same* request, reusing the original `Idempotency-Key` and the remaining retry budget, so a replayed OTP send deduplicates server-side instead of dispatching a second message.
 
 ## Privacy (DPDP / GDPR)
 

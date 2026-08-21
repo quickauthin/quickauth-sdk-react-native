@@ -15,7 +15,9 @@ const UTM_KEYS: Array<[keyof AttributionPayload, string]> = [
   ['term', 'utm_term'],
 ];
 
-const CLICK_KEYS = ['qa_click_id', 'click_id', 'gclid', 'fbclid', 'ttclid'];
+// `qa_clid` first: it is the parameter QuickAuth's own click tracker appends,
+// so it is the only one that can bind a launch back to a QuickAuth click.
+const CLICK_KEYS = ['qa_clid', 'qa_click_id', 'click_id', 'gclid', 'fbclid', 'ttclid'];
 
 export function parseLaunchUrl(url: string | null | undefined): Partial<AttributionPayload> {
   if (!url) return {};
@@ -79,11 +81,16 @@ export async function capture(url: string | null | undefined): Promise<Attributi
   }
 
   if (consent.get()) {
+    // The click-match join runs off a top-level `qa_clid`; the nested
+    // `clickId` is carried for the stored payload's shape and never read
+    // by the matcher.
+    const body: Record<string, unknown> = { ...payload };
+    if (payload.clickId) body.qa_clid = payload.clickId;
     try {
       await request({
         method: 'POST',
         path: '/v1/sdk/attribution/launch',
-        body: payload,
+        body,
       });
     } catch {
       /* swallow — attribution is best-effort */

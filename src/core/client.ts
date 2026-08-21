@@ -1,8 +1,10 @@
 /**
  * HTTP client — fetch wrapper with retries, idempotency keys, per-request
- * timeouts via AbortController, and ephemeral session-token bearer auth.
+ * timeouts via AbortController, and either publishable-key or ephemeral
+ * session-token bearer auth.
  */
 
+import { appIdentityHeaders } from './app-identity';
 import { getConfig } from './config';
 import type { TokenProvider } from '../types';
 
@@ -18,8 +20,6 @@ export interface RequestOptions {
   maxRetries?: number;
   /** Extra headers. */
   headers?: Record<string, string>;
-  /** Internal — set by retry path so we don't loop forever on 401. */
-  _retriedAfter401?: boolean;
 }
 
 export interface ApiError extends Error {
@@ -239,24 +239,36 @@ export async function request<T = unknown>(opts: RequestOptions): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? cfg.requestTimeoutMs;
   const maxRetries = opts.maxRetries ?? cfg.maxRetries;
 
-  const tm = getTokenManager();
-  const token = await tm.getToken();
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
-    Authorization: `Bearer ${token}`,
     'X-QuickAuth-SDK': 'react-native',
     'X-QuickAuth-SDK-Version': '0.1.0',
-    ...(opts.headers ?? {}),
   };
 
+  // Publishable-key mode authenticates on the key plus the app identity alone.
+  // There is no session token to mint, cache, refresh or invalidate, so the
+  // token manager is never constructed — building it would invoke a token
+  // provider the customer never configured.
+  const tm = cfg.isPublishableKeyMode ? null : getTokenManager();
+  if (tm) {
+    headers.Authorization = `Bearer ${await tm.getToken()}`;
+  } else {
+    headers['X-QuickAuth-Key'] = cfg.publishableKey as string;
+    Object.assign(headers, await appIdentityHeaders());
+  }
+  Object.assign(headers, opts.headers ?? {});
+
   if (method !== 'GET') {
+    // Minted once and reused for every attempt below. A retry that mints a
+    // fresh key is a *new* request to the backend, so a retried OTP send would
+    // dispatch a second message instead of deduplicating to the first.
     headers['Idempotency-Key'] = opts.idempotencyKey ?? genIdempotencyKey();
   }
 
   let attempt = 0;
   let lastErr: ApiError | null = null;
+  let refreshedAfter401 = false;
 
   while (attempt <= maxRetries) {
     const controller = new AbortController();
@@ -288,20 +300,33 @@ export async function request<T = unknown>(opts: RequestOptions): Promise<T> {
         { status: res.status, body: parsed }
       );
 
-      // 401 — invalidate token + retry once with a fresh one.
-      if (res.status === 401 && !opts._retriedAfter401) {
+      // 401 — the token expired mid-flight. Swap in a fresh one and replay the
+      // same request: retrying in-loop keeps the attempt budget and the
+      // Idempotency-Key from the first send, both of which a recursive call
+      // would silently reset. Latched, so at most one refresh per request.
+      if (res.status === 401 && tm && !refreshedAfter401) {
+        refreshedAfter401 = true;
         tm.invalidate();
-        return request<T>({ ...opts, _retriedAfter401: true });
+        let fresh: string;
+        try {
+          fresh = await tm.getToken();
+        } catch {
+          throw err; // provider is broken — surface the 401, not its failure
+        }
+        headers.Authorization = `Bearer ${fresh}`;
+        continue;
       }
 
-      // 4xx — don't retry except 408 / 429
-      if (res.status < 500 && res.status !== 408 && res.status !== 429) throw err;
+      // 4xx — don't retry except 408. A 429 is the backend telling us it is
+      // already over capacity for this caller; retrying on a blind backoff
+      // just adds load to the limit that was imposed.
+      if (res.status < 500 && res.status !== 408) throw err;
       lastErr = err;
     } catch (e) {
       clearTimeout(timer);
       const err = e as ApiError;
-      // Bail immediately on a 4xx that isn't 408/429 (rethrown above).
-      if (err && typeof err.status === 'number' && err.status < 500 && err.status !== 408 && err.status !== 429) {
+      // Bail immediately on a 4xx that isn't 408 (rethrown above).
+      if (err && typeof err.status === 'number' && err.status < 500 && err.status !== 408) {
         throw err;
       }
       lastErr = err;

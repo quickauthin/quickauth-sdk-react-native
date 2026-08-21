@@ -89,6 +89,20 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
         }
     }
 
+    /**
+     * Android package name, used to app-lock a publishable key server-side.
+     * Resolves null instead of rejecting: a missing identity must degrade to
+     * an omitted header, never fail the auth request that needed it.
+     */
+    @ReactMethod
+    public void getAppIdentity(final Promise promise) {
+        try {
+            promise.resolve(reactContext.getPackageName());
+        } catch (Exception e) {
+            promise.resolve(null);
+        }
+    }
+
     // RN >= 0.65 requires explicit add/remove listener stubs to silence warnings.
     @ReactMethod public void addListener(String eventName) {}
     @ReactMethod public void removeListeners(Integer count) {}
