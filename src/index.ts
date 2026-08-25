@@ -68,6 +68,8 @@ const QuickAuth = {
   auth: {
     initiate: (opts: InitiateOptions) => otpApi.initiate(opts),
     submitOtp: (code: string) => otpApi.submitOtp(code),
+    /** Send the code again, to the number the current attempt is already for. */
+    resendOtp: () => otpApi.resendOtp(),
     reset: (opts?: ResetOptions) => otpApi.reset(opts),
     observeOTP: (cb: OtpObserverCallback): OtpSubscription => otpApi.observeOTP(cb),
     startWhatsAppLogin: (p: WhatsAppLoginParams) => otpApi.startWhatsAppLogin(p),
