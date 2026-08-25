@@ -30,6 +30,7 @@ import {
   type ResetOptions,
 } from '../types';
 import * as smsRetriever from './sms-retriever';
+import * as whatsAppOtp from './whatsapp-otp';
 import { startWhatsAppLogin } from './whatsapp';
 
 const DEVICE_TOKEN_KEY = 'qa_device_token';
@@ -131,6 +132,19 @@ export async function initiate(opts: InitiateOptions): Promise<void> {
   const attemptId = ++attemptCounter;
   state = { kind: 'sending', attemptId };
 
+  // Both before the request goes out, not after. The receiver holds a code so a zero-tap
+  // arriving before JS was running is not lost, and delivering that against a restarted
+  // request fails verification for reasons the user cannot see — while a handshake that lands
+  // after the template is too late for the message already in flight.
+  await whatsAppOtp.clearPending();
+  await whatsAppOtp.sendHandshake();
+
+  activePhone = phone.trim();
+  activeChannel = channel;
+  autoSubmit = opts.autoSubmit ?? false;
+  autoSubmitted = false;
+  listenForAutoRead();
+
   const deviceToken = await loadDeviceToken();
   const body: Record<string, unknown> = {
     phone: phone.trim(),
@@ -219,6 +233,7 @@ export async function submitOtp(code: string): Promise<void> {
 }
 
 export async function reset(opts?: ResetOptions): Promise<void> {
+  stopAutoRead();
   state = { kind: 'idle' };
   attemptCounter++;
   if (opts?.forgetDevice) {
@@ -226,11 +241,108 @@ export async function reset(opts?: ResetOptions): Promise<void> {
   }
 }
 
-export function observeOTP(callback: OtpObserverCallback): OtpSubscription {
-  return smsRetriever.observe((code: string) => {
-    callback(code);
+/**
+ * Codes read automatically, from whichever channel delivered them (Android only).
+ *
+ * Merges the two, because they are two delivery mechanisms for one thing and a caller should
+ * not have to know which arrived. An OTP sent over SMS is parsed out of the message body by
+ * the SMS Retriever; a WhatsApp one-tap or zero-tap code is broadcast to the app by WhatsApp
+ * and arrives already extracted. Listening to only one means a merchant on `auto` gets
+ * auto-read for some users and not others, with nothing to explain the difference.
+ */
+/**
+ * The phone and options of the live attempt, so `resendOtp` needs no arguments.
+ *
+ * A merchant should not have to hold the number themselves to resend to it — they already gave
+ * it to us, and asking again is an opportunity to pass a different one, which would start a
+ * second transaction and leave the user holding two codes.
+ */
+let activePhone: string | null = null;
+let activeChannel: OtpChannel = OtpChannel.AUTO;
+let autoSubmit = false;
+
+/**
+ * One auto-submit per attempt. Both sources can deliver — a merchant on `auto` may get the SMS
+ * and the WhatsApp copy — and submitting the second would verify a code the server has already
+ * consumed, surfacing as a spurious failure after a success.
+ */
+let autoSubmitted = false;
+let autoReadSub: OtpSubscription | null = null;
+
+/**
+ * Subscribe on the caller's behalf, so a code is delivered whether or not they listen.
+ *
+ * Without this, auto-read only worked for a caller who happened to call `observeOTP`: the
+ * native receiver holds a code until something listens, so with nobody subscribed it was
+ * received, held, and never delivered — and `autoSubmit` would do nothing at all, in exactly
+ * the case where the caller was told they need not listen.
+ *
+ * Idempotent across attempts: a resend must not stack subscriptions, and the old one is dropped
+ * first so a code from a previous attempt cannot arrive on it.
+ */
+function listenForAutoRead(): void {
+  autoReadSub?.remove();
+  autoReadSub = observeOTP((code) => {
+    // The event is emitted here, once, rather than inside observeOTP. Emitting there fired
+    // OTP_AUTO_READ twice for one code — once for this subscription and once for the caller's
+    // — and a merchant driving their UI from that event would see the field fill, clear and
+    // fill again.
     emit({ type: 'OTP_AUTO_READ', code });
+    if (!autoSubmit || autoSubmitted) return;
+    autoSubmitted = true;
+    // Errors already surface through the event stream; a rejection here has nowhere to go.
+    void submitOtp(code).catch(() => undefined);
   });
+}
+
+/**
+ * Send the code again, to the number the current attempt is already for.
+ *
+ * Within the merchant's expiry window the server returns the SAME code and pushes the expiry
+ * forward, so a user who missed the first message gets that message again rather than a second
+ * code to choose between. Past the window it issues a fresh one.
+ *
+ * Takes no phone number deliberately: the merchant already gave us one, and asking again is an
+ * opportunity to pass a different one by accident — which would start a separate transaction
+ * and leave the user holding two codes, only one of which works.
+ *
+ * Carries the original attempt's channel and `autoSubmit` setting, so a resend behaves like the
+ * request it repeats rather than silently reverting to defaults. It also re-sends the WhatsApp
+ * handshake, which Meta expires after ten minutes — a user who waits before tapping resend
+ * would otherwise get a message their app can no longer auto-read.
+ *
+ * Throws if there is nothing to resend: a resend button should only exist once a code has been
+ * sent, so reaching it otherwise is a programming error rather than a runtime condition.
+ */
+export async function resendOtp(): Promise<void> {
+  if (!activePhone) {
+    throw new Error('[QuickAuth] resendOtp: nothing to resend — call initiate() first.');
+  }
+  await initiate({ phone: activePhone, channel: activeChannel, autoSubmit });
+}
+
+/** Stop listening for auto-read codes. Safe to call twice. */
+function stopAutoRead(): void {
+  autoReadSub?.remove();
+  autoReadSub = null;
+  autoSubmit = false;
+  // Nothing left to resend to: a reset ends the attempt, and resending afterwards would
+  // message someone who is no longer mid-login.
+  activePhone = null;
+}
+
+export function observeOTP(callback: OtpObserverCallback): OtpSubscription {
+  // No emit here: initiate() subscribes on the caller's behalf and emits from there, so doing
+  // it again would fire OTP_AUTO_READ twice for one code.
+  const deliver = (code: string) => callback(code);
+  const smsSub = smsRetriever.observe(deliver);
+  const waSub = whatsAppOtp.observe(deliver);
+  return {
+    remove: () => {
+      smsSub.remove();
+      waSub.remove();
+    },
+  };
 }
 
 export async function getSmsRetrieverHash(): Promise<string | null> {
