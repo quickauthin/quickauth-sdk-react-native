@@ -56,11 +56,10 @@ function getEmitter(): NativeEventEmitter | null {
 /**
  * Tell WhatsApp a code is about to be requested, and that this app may receive it.
  *
- * Zero-tap does not work without this. Meta requires the handshake to be broadcast BEFORE the
- * authentication template is sent — without it WhatsApp shows the message and simply never
- * broadcasts the code, with every other check passing and nothing to explain it.
+ * Meta requires this BEFORE the template is sent; without it WhatsApp shows the message and
+ * never broadcasts the code, with every other check passing and nothing to explain it. Expires
+ * after ten minutes, so it goes per request rather than once at startup.
  *
- * Sent per request rather than once at startup, because Meta expires it after ten minutes.
  * Never throws: a missing handshake costs auto-read, not the login.
  */
 export async function sendHandshake(): Promise<string | null> {
@@ -76,9 +75,8 @@ export async function sendHandshake(): Promise<string | null> {
 /**
  * Discard any code held natively from an earlier attempt.
  *
- * The receiver holds one so a zero-tap arriving before JS was running is not lost; delivering
- * that against a request the user has since restarted fails verification for reasons they
- * cannot see.
+ * Delivering one against a request the user has since restarted fails verification for reasons
+ * they cannot see.
  */
 export async function clearPending(): Promise<void> {
   const native = getNative();
@@ -97,8 +95,7 @@ export function observe(callback: OtpObserverCallback): OtpSubscription {
   const ee = getEmitter();
   if (!native || !ee) return { remove: () => undefined };
 
-  // Attaching also flushes anything the receiver caught while JS was not running — the
-  // zero-tap case this whole path exists for.
+  // Attaching also flushes anything caught while JS was not running.
   void native.startWhatsAppOtp().catch(() => undefined);
 
   const sub = ee.addListener(WA_EVENT, (payload: { code?: string } | string) => {
@@ -109,8 +106,7 @@ export function observe(callback: OtpObserverCallback): OtpSubscription {
   return {
     remove: () => {
       sub.remove();
-      // Detach natively too, so a torn-down listener does not leave the receiver holding a
-      // reference to a callback that no longer exists.
+      // Detach natively too, or the receiver keeps a reference to a dead callback.
       void native.stopWhatsAppOtp().catch(() => undefined);
     },
   };
