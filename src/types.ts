@@ -47,6 +47,14 @@ export interface InitiateOptions {
   phone: string;
   /** Delivery channel preference. Server picks if omitted or `auto`. */
   channel?: OtpChannel;
+  /**
+   * Verify an auto-read code without the caller doing anything.
+   *
+   * Off by default: an app that already submits from its own `observeOTP` callback would
+   * otherwise submit twice, and the second fails against a code the server has consumed —
+   * surfacing as an error after a success.
+   */
+  autoSubmit?: boolean;
 }
 
 export interface ResetOptions {

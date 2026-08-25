@@ -139,6 +139,10 @@ export async function initiate(opts: InitiateOptions): Promise<void> {
   await whatsAppOtp.clearPending();
   await whatsAppOtp.sendHandshake();
 
+  autoSubmit = opts.autoSubmit ?? false;
+  autoSubmitted = false;
+  listenForAutoRead();
+
   const deviceToken = await loadDeviceToken();
   const body: Record<string, unknown> = {
     phone: phone.trim(),
@@ -227,6 +231,7 @@ export async function submitOtp(code: string): Promise<void> {
 }
 
 export async function reset(opts?: ResetOptions): Promise<void> {
+  stopAutoRead();
   state = { kind: 'idle' };
   attemptCounter++;
   if (opts?.forgetDevice) {
@@ -243,11 +248,53 @@ export async function reset(opts?: ResetOptions): Promise<void> {
  * and arrives already extracted. Listening to only one means a merchant on `auto` gets
  * auto-read for some users and not others, with nothing to explain the difference.
  */
-export function observeOTP(callback: OtpObserverCallback): OtpSubscription {
-  const deliver = (code: string) => {
-    callback(code);
+let autoSubmit = false;
+
+/**
+ * One auto-submit per attempt. Both sources can deliver — a merchant on `auto` may get the SMS
+ * and the WhatsApp copy — and submitting the second would verify a code the server has already
+ * consumed, surfacing as a spurious failure after a success.
+ */
+let autoSubmitted = false;
+let autoReadSub: OtpSubscription | null = null;
+
+/**
+ * Subscribe on the caller's behalf, so a code is delivered whether or not they listen.
+ *
+ * Without this, auto-read only worked for a caller who happened to call `observeOTP`: the
+ * native receiver holds a code until something listens, so with nobody subscribed it was
+ * received, held, and never delivered — and `autoSubmit` would do nothing at all, in exactly
+ * the case where the caller was told they need not listen.
+ *
+ * Idempotent across attempts: a resend must not stack subscriptions, and the old one is dropped
+ * first so a code from a previous attempt cannot arrive on it.
+ */
+function listenForAutoRead(): void {
+  autoReadSub?.remove();
+  autoReadSub = observeOTP((code) => {
+    // The event is emitted here, once, rather than inside observeOTP. Emitting there fired
+    // OTP_AUTO_READ twice for one code — once for this subscription and once for the caller's
+    // — and a merchant driving their UI from that event would see the field fill, clear and
+    // fill again.
     emit({ type: 'OTP_AUTO_READ', code });
-  };
+    if (!autoSubmit || autoSubmitted) return;
+    autoSubmitted = true;
+    // Errors already surface through the event stream; a rejection here has nowhere to go.
+    void submitOtp(code).catch(() => undefined);
+  });
+}
+
+/** Stop listening for auto-read codes. Safe to call twice. */
+function stopAutoRead(): void {
+  autoReadSub?.remove();
+  autoReadSub = null;
+  autoSubmit = false;
+}
+
+export function observeOTP(callback: OtpObserverCallback): OtpSubscription {
+  // No emit here: initiate() subscribes on the caller's behalf and emits from there, so doing
+  // it again would fire OTP_AUTO_READ twice for one code.
+  const deliver = (code: string) => callback(code);
   const smsSub = smsRetriever.observe(deliver);
   const waSub = whatsAppOtp.observe(deliver);
   return {
