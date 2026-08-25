@@ -1,8 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.quickauth.rnsdk">
+<!--
+  No SMS permission, deliberately.
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+  This declared RECEIVE_SMS and nothing ever used it: auto-read goes through Google's
+  SmsRetriever, which reads exactly one message — the one ending in the app's own 11-char hash
+  — and needs no permission at all. That is what the hash is for.
 
+  It was not merely redundant. A library's manifest merges into every app that depends on it,
+  so every merchant shipped an SMS permission they did not use, and RECEIVE_SMS is in Google
+  Play's restricted set: an app declaring it must justify the use in a Play Console declaration
+  or be removed from the store. The SDK was creating a review problem for its users in exchange
+  for nothing.
+
+  INTERNET goes too — React Native's own manifest already provides it.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+      Android 11 (API 30) filters which other apps a package can see, and that filtering
+      applies to an explicit broadcast just as it does to a query: setPackage("com.whatsapp")
+      on a device where WhatsApp is invisible to us delivers nothing.
+
+      The zero-tap handshake is exactly that kind of broadcast, so without this an app
+      targeting API 30+ — which is every app now — silently fails to hand WhatsApp the
+      handshake, and zero-tap cannot work however correct the template, hash and receiver are.
+      Nothing throws; the broadcast is simply dropped.
+    -->
+    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+    </queries>
+
+    <application>
+        <!--
+          WhatsApp delivers a zero-tap or one-tap code by broadcasting to the app, not by SMS,
+          so SmsRetriever never sees it. Declared statically rather than registered at runtime
+          because the code can arrive while the app is backgrounded or not running.
+
+          No android:permission: Android silently refuses to deliver a broadcast to a receiver
+          guarded by a permission the sender does not hold, so a guessed name produces a
+          receiver that never fires. Meta's documented receiver declares exported and no
+          permission; safety comes from WhatsApp's own package + signing-hash check.
+        -->
+        <receiver
+            android:name="io.quickauth.rnsdk.WhatsAppOtpReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.whatsapp.otp.OTP_RETRIEVED" />
+            </intent-filter>
+        </receiver>
+    </application>
 </manifest>

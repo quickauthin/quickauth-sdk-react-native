@@ -30,6 +30,7 @@ import {
   type ResetOptions,
 } from '../types';
 import * as smsRetriever from './sms-retriever';
+import * as whatsAppOtp from './whatsapp-otp';
 import { startWhatsAppLogin } from './whatsapp';
 
 const DEVICE_TOKEN_KEY = 'qa_device_token';
@@ -131,6 +132,13 @@ export async function initiate(opts: InitiateOptions): Promise<void> {
   const attemptId = ++attemptCounter;
   state = { kind: 'sending', attemptId };
 
+  // Both before the request goes out, not after. The receiver holds a code so a zero-tap
+  // arriving before JS was running is not lost, and delivering that against a restarted
+  // request fails verification for reasons the user cannot see — while a handshake that lands
+  // after the template is too late for the message already in flight.
+  await whatsAppOtp.clearPending();
+  await whatsAppOtp.sendHandshake();
+
   const deviceToken = await loadDeviceToken();
   const body: Record<string, unknown> = {
     phone: phone.trim(),
@@ -226,11 +234,28 @@ export async function reset(opts?: ResetOptions): Promise<void> {
   }
 }
 
+/**
+ * Codes read automatically, from whichever channel delivered them (Android only).
+ *
+ * Merges the two, because they are two delivery mechanisms for one thing and a caller should
+ * not have to know which arrived. An OTP sent over SMS is parsed out of the message body by
+ * the SMS Retriever; a WhatsApp one-tap or zero-tap code is broadcast to the app by WhatsApp
+ * and arrives already extracted. Listening to only one means a merchant on `auto` gets
+ * auto-read for some users and not others, with nothing to explain the difference.
+ */
 export function observeOTP(callback: OtpObserverCallback): OtpSubscription {
-  return smsRetriever.observe((code: string) => {
+  const deliver = (code: string) => {
     callback(code);
     emit({ type: 'OTP_AUTO_READ', code });
-  });
+  };
+  const smsSub = smsRetriever.observe(deliver);
+  const waSub = whatsAppOtp.observe(deliver);
+  return {
+    remove: () => {
+      smsSub.remove();
+      waSub.remove();
+    },
+  };
 }
 
 export async function getSmsRetrieverHash(): Promise<string | null> {
