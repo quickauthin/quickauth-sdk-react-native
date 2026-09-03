@@ -57,6 +57,9 @@ jobs:
         run: npm ci
 
       - name: Bump package.json to ${{ inputs.version }}
+        # The only place a version is written by hand. Everything else derives
+        # from it: src/version.ts (generated in prebuild), android/build.gradle
+        # (JsonSlurper) and ios/QuickAuthRnSdk.podspec (JSON.parse).
         run: npm version ${{ inputs.version }} --no-git-tag-version
 
       - name: Build (bob)
@@ -79,8 +82,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Commit version bump + tag + push
+        # src/version.ts is generated from package.json by the prebuild step, so
+        # it moves with the bump. android/build.gradle and the podspec read
+        # package.json directly and never change.
         run: |
-          git add package.json package-lock.json
+          git add package.json package-lock.json src/version.ts
           git commit -m "chore(release): v${{ inputs.version }}"
           git tag -a "v${{ inputs.version }}" -m "v${{ inputs.version }}"
           git push origin HEAD --follow-tags

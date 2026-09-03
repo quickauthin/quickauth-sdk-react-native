@@ -4,6 +4,7 @@
  */
 
 import { getConfig } from './config';
+import { SDK_PLATFORM, SDK_VERSION } from '../version';
 import type { TokenProvider } from '../types';
 
 export interface RequestOptions {
@@ -183,8 +184,8 @@ async function mintUnsafeToken(): Promise<string> {
         Accept: 'application/json',
         'X-Client-Id': cfg.unsafe.clientId,
         'X-Client-Secret': cfg.unsafe.clientSecret,
-        'X-QuickAuth-SDK': 'react-native',
-        'X-QuickAuth-SDK-Version': '0.1.0',
+        'X-QuickAuth-SDK': SDK_PLATFORM,
+        'X-QuickAuth-SDK-Version': SDK_VERSION,
       },
       body: JSON.stringify({}),
       signal: controller.signal,
@@ -246,8 +247,8 @@ export async function request<T = unknown>(opts: RequestOptions): Promise<T> {
     'Content-Type': 'application/json',
     Accept: 'application/json',
     Authorization: `Bearer ${token}`,
-    'X-QuickAuth-SDK': 'react-native',
-    'X-QuickAuth-SDK-Version': '0.1.0',
+    'X-QuickAuth-SDK': SDK_PLATFORM,
+    'X-QuickAuth-SDK-Version': SDK_VERSION,
     ...(opts.headers ?? {}),
   };
 
