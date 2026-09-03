@@ -31,6 +31,8 @@ export const Platform = {
     (spec as Record<string, T>)[(Platform as { OS: string }).OS] ?? spec.default,
 };
 
+// One emitter for both auto-read events, keyed by event name — the real
+// NativeEventEmitter multiplexes the same way.
 const smsEmitter = new MockEmitter();
 
 export const NativeModules: Record<string, unknown> = {
@@ -38,6 +40,13 @@ export const NativeModules: Record<string, unknown> = {
     start: jest.fn().mockResolvedValue(undefined),
     stop: jest.fn().mockResolvedValue(undefined),
     getAppHash: jest.fn().mockResolvedValue('TEST12HASH'),
+    getAppHashes: jest.fn().mockResolvedValue(['TEST12HASH']),
+    // WhatsApp zero-tap / one-tap bridge. Presence of startWhatsAppOtpListener
+    // is what the JS side treats as "this native build supports it".
+    startWhatsAppOtpListener: jest.fn().mockResolvedValue(undefined),
+    stopWhatsAppOtpListener: jest.fn().mockResolvedValue(undefined),
+    sendWhatsAppOtpHandshake: jest.fn().mockResolvedValue('handshake-req-id'),
+    clearWhatsAppOtp: jest.fn().mockResolvedValue(undefined),
     addListener: jest.fn(),
     removeListeners: jest.fn(),
     __emit: (payload: unknown) => smsEmitter.emit('qa.sms.code', payload),
@@ -107,6 +116,10 @@ export const StyleSheet = {
 // Helper for tests
 export const __testHelpers = {
   smsEmitter,
+  /** Deliver a WhatsApp zero-tap / one-tap code to whatever is subscribed. */
+  emitWhatsAppCode: (payload: unknown) => smsEmitter.emit('qa.whatsapp.code', payload),
+  /** Deliver an SMS Retriever code. */
+  emitSmsCode: (payload: unknown) => smsEmitter.emit('qa.sms.code', payload),
   setPlatform: (os: 'ios' | 'android' | 'web') => {
     Platform.OS = os;
   },
