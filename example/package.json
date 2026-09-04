@@ -9,7 +9,7 @@
     "expo": "expo start"
   },
   "dependencies": {
-    "@quickauth/react-native": "file:..",
+    "@quickauthin/react-native": "file:..",
     "@react-native-async-storage/async-storage": "^1.23.1",
     "react": "18.2.0",
     "react-native": "0.72.0"

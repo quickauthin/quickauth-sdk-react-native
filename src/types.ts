@@ -27,8 +27,9 @@ export type AuthEventHandler = (event: AuthEvent) => void;
  * `initiate()` again resets the state machine.
  *
  * - `OTP_SENT` — backend dispatched an OTP. Render the input.
- * - `OTP_AUTO_READ` — SMS auto-read (Android Retriever). SDK does NOT
- *   auto-submit; merchant decides whether to.
+ * - `OTP_AUTO_READ` — a code the SDK read for the user, from Android's SMS
+ *   Retriever or a WhatsApp zero-tap / one-tap broadcast. The SDK does not
+ *   submit it unless `initiate({ autoSubmit: true })` asked it to.
  * - `VERIFIED` — user is authenticated. Covers fresh OTP success AND silent
  *   device-trust re-auth. Forward `requestId` to the merchant backend.
  * - `OTP_FAILED` — submitted code was rejected. SDK stays in awaiting-OTP
@@ -47,6 +48,22 @@ export interface InitiateOptions {
   phone: string;
   /** Delivery channel preference. Server picks if omitted or `auto`. */
   channel?: OtpChannel;
+  /**
+   * Verify an auto-read code without waiting for the merchant to forward it.
+   *
+   * Off by default: a merchant who wants to show the code landing in the
+   * field before it is spent should get that unless they ask otherwise.
+   *
+   * Guarded by a one-shot latch per attempt. A merchant on `auto` can receive
+   * the same code twice — once parsed out of the SMS, once broadcast by
+   * WhatsApp — and submitting the second would verify a code the server has
+   * already consumed, surfacing to the user as a failure arriving right after
+   * a success.
+   *
+   * Carried across `resendOtp()`, which repeats the request rather than
+   * starting a differently-configured one.
+   */
+  autoSubmit?: boolean;
 }
 
 export interface ResetOptions {
@@ -85,6 +102,18 @@ export interface QuickAuthConfig {
   /** Suppress console warnings. */
   silent?: boolean;
   /**
+   * Where the SDK persists the OneTap device token and the last attribution
+   * payload.
+   *
+   * Defaults to `@react-native-async-storage/async-storage`, a peer
+   * dependency. If it is not installed, `init()` throws rather than quietly
+   * keeping the device token in memory — a memory-only token means OneTap
+   * silently stops working after every cold start, which is invisible in
+   * development and expensive in production. Pass an adapter here (or
+   * `createMemoryStorage()`, to accept that trade-off deliberately).
+   */
+  storage?: QuickAuthStorageAdapter;
+  /**
    * Headless auth event handler. The SDK invokes this with a typed
    * `AuthEvent` as the auth lifecycle progresses. One handler per init;
    * pass a new value to a subsequent `QuickAuth.init({ onAuthEvent })`
@@ -96,6 +125,21 @@ export interface QuickAuthConfig {
 export interface WhatsAppLoginParams {
   businessNumber: string;
   message?: string;
+}
+
+/**
+ * Persistent key-value storage the SDK uses for the device token (OneTap) and
+ * the last captured attribution payload.
+ *
+ * Structurally identical to `@react-native-async-storage/async-storage`, so
+ * that module satisfies it directly. Pass your own (MMKV, Keychain,
+ * EncryptedStorage) via `QuickAuth.init({ storage })` when you would rather
+ * not add AsyncStorage.
+ */
+export interface QuickAuthStorageAdapter {
+  getItem(key: string): Promise<string | null>;
+  setItem(key: string, value: string): Promise<void>;
+  removeItem(key: string): Promise<void>;
 }
 
 export interface AttributionPayload {
