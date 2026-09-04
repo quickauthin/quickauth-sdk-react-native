@@ -13,7 +13,7 @@ import QuickAuth, {
   QuickAuthOtpField,
   OtpChannel,
   colors,
-} from '@quickauth/react-native';
+} from '@quickauthin/react-native';
 
 export default function App(): React.ReactElement {
   const [phone, setPhone] = useState('+919876543210');

@@ -94,9 +94,9 @@ jobs:
       - name: Summary
         run: |
           {
-            echo "## ✅ Published @quickauth/react-native@${{ inputs.version }}"
+            echo "## ✅ Published @quickauthin/react-native@${{ inputs.version }}"
             echo ""
-            echo "- npm: https://www.npmjs.com/package/@quickauth/react-native/v/${{ inputs.version }}"
+            echo "- npm: https://www.npmjs.com/package/@quickauthin/react-native/v/${{ inputs.version }}"
             echo "- Tag: \`v${{ inputs.version }}\`"
-            echo "- Install: \`npm install @quickauth/react-native@${{ inputs.version }}\`"
+            echo "- Install: \`npm install @quickauthin/react-native@${{ inputs.version }}\`"
           } >> $GITHUB_STEP_SUMMARY

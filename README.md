@@ -1,4 +1,4 @@
-# @quickauth/react-native
+# @quickauthin/react-native
 
 Phone OTP authentication + WhatsApp marketing attribution for React Native.
 
@@ -16,7 +16,7 @@ Phone OTP authentication + WhatsApp marketing attribution for React Native.
 ## Install
 
 ```bash
-npm install @quickauth/react-native
+npm install @quickauthin/react-native
 # iOS only
 cd ios && pod install
 ```
@@ -34,7 +34,7 @@ This is a **peer dependency**, not an optional one. The SDK stores the device to
 Earlier versions fell back to an in-memory `Map` when AsyncStorage was missing. Everything looked fine for the length of a session, and OneTap silently never fired again after a cold start. `init()` now throws instead, naming the fix. If you would rather not add AsyncStorage, pass your own adapter:
 
 ```ts
-import QuickAuth, { createMemoryStorage } from '@quickauth/react-native';
+import QuickAuth, { createMemoryStorage } from '@quickauthin/react-native';
 
 // MMKV, Keychain, EncryptedStorage — anything with async getItem/setItem/removeItem
 await QuickAuth.init({ onTokenExpiry, storage: myAdapter });
@@ -48,7 +48,7 @@ await QuickAuth.init({ onTokenExpiry, storage: createMemoryStorage() });
 QuickAuth never wants your `client_secret` shipped in a mobile binary. Instead, your **own backend** mints a short-lived (10-minute) session JWT, and the SDK uses it as a `Bearer` token. When the token is about to expire, the SDK calls your `onTokenExpiry` async callback to get a new one. Same pattern as Twilio Verify, Stripe, etc.
 
 ```ts
-import QuickAuth, { OtpChannel } from '@quickauth/react-native';
+import QuickAuth, { OtpChannel } from '@quickauthin/react-native';
 
 await QuickAuth.init({
   onTokenExpiry: async () => {
@@ -97,7 +97,7 @@ The SDK logs a `console.warn` on init reminding you this is unsafe for public mo
 Every outcome arrives on one typed event handler. The async methods resolve when the network call is done; the events are the source of truth for what to render.
 
 ```ts
-import QuickAuth, { OtpChannel } from '@quickauth/react-native';
+import QuickAuth, { OtpChannel } from '@quickauthin/react-native';
 
 await QuickAuth.init({
   onTokenExpiry: async () => {
@@ -168,7 +168,7 @@ It rejects when there is no attempt to resend, including after `reset()` — a r
 import {
   QuickAuthLoginButton,
   QuickAuthOtpField,
-} from '@quickauth/react-native';
+} from '@quickauthin/react-native';
 
 <QuickAuthLoginButton
   phone="+919876543210"
