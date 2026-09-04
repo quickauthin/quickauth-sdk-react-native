@@ -1,6 +1,6 @@
 {
   "name": "@quickauth/react-native",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "QuickAuth React Native SDK — phone OTP authentication and WhatsApp marketing attribution",
   "homepage": "https://quickauth.in",
   "repository": {
@@ -93,15 +93,21 @@
     "targets": [
       [
         "commonjs",
-        { "esm": false }
+        {
+          "esm": false
+        }
       ],
       [
         "module",
-        { "esm": false }
+        {
+          "esm": false
+        }
       ],
       [
         "typescript",
-        { "project": "tsconfig.build.json" }
+        {
+          "project": "tsconfig.build.json"
+        }
       ]
     ]
   }
