@@ -204,9 +204,9 @@ QuickAuth.init({
   requestTimeoutMs?,
   silent?,
 })
-QuickAuth.isInitialized(): boolean
-QuickAuth.config(): ResolvedConfig
-QuickAuth.tokenManager(): TokenManager
+QuickAuth.isInitialized: boolean
+QuickAuth.config: ResolvedConfig
+QuickAuth.tokenManager: TokenManager
 QuickAuth.setAuthEventHandler(handler | null)   // attach from a screen, not at startup
 QuickAuth.reset(): Promise<void>                // tear down; keeps the device token
 

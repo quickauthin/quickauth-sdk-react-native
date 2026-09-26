@@ -82,7 +82,7 @@ async function init(config: QuickAuthConfig): Promise<void> {
 
 /**
  * Tear the SDK down: end any auth attempt, stop auto-read, drop the cached
- * session token and forget the configuration. `isInitialized()` is false
+ * session token and forget the configuration. `isInitialized` is false
  * afterwards and `init()` must be called again.
  *
  * The persisted device token survives — a teardown is not a sign-out. Use
@@ -98,16 +98,30 @@ const QuickAuth = {
   init,
   reset,
 
+  // These three are GETTERS, not methods, to match the Flutter and Web SDKs
+  // (`QuickAuth.isInitialized`, not `QuickAuth.isInitialized()`). As methods they
+  // were a silent trap: `if (QuickAuth.isInitialized)` is always truthy for a
+  // function, so the guard passes before init() has run and the failure surfaces
+  // somewhere else entirely.
+
   /** Whether `init()` has run. */
-  isInitialized: (): boolean => isInitialised(),
+  get isInitialized(): boolean {
+    return isInitialised()
+  },
   /** @deprecated spelling kept for 1.x callers — use `isInitialized`. */
-  isInitialised,
+  get isInitialised(): boolean {
+    return isInitialised()
+  },
 
   /** The resolved, defaulted configuration. Throws before `init()`. */
-  config: (): ResolvedConfig => getConfig(),
+  get config(): ResolvedConfig {
+    return getConfig()
+  },
 
   /** Session-token manager — exposed for tests and advanced flows. */
-  tokenManager: (): TokenManager => getTokenManager(),
+  get tokenManager(): TokenManager {
+    return getTokenManager()
+  },
 
   /**
    * Replace the auth event handler after `init()` — for apps that attach it

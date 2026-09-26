@@ -68,12 +68,12 @@ describe('core/storage — an explicit dependency', () => {
   it('a failed init leaves the SDK uninitialised rather than half-configured', async () => {
     await QuickAuth.init({ onTokenExpiry: tokenProvider }).catch(() => undefined);
     expect(isInitialised()).toBe(false);
-    expect(QuickAuth.isInitialized()).toBe(false);
+    expect(QuickAuth.isInitialized).toBe(false);
   });
 
   it('accepts any adapter with the three async methods', async () => {
     await QuickAuth.init({ onTokenExpiry: tokenProvider, storage: createMemoryStorage() });
-    expect(QuickAuth.isInitialized()).toBe(true);
+    expect(QuickAuth.isInitialized).toBe(true);
     expect(hasStorage()).toBe(true);
   });
 
