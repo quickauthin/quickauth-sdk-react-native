@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Pressable,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -12,23 +13,53 @@ import QuickAuth, {
   QuickAuthOtpField,
   OtpChannel,
   colors,
-} from '@quickauth/react-native';
+} from '@quickauthin/react-native';
 
 export default function App(): React.ReactElement {
   const [phone, setPhone] = useState('+919876543210');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [code, setCode] = useState('');
-  const [jwt, setJwt] = useState<string | null>(null);
+  const [requestId, setRequestId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      await QuickAuth.init({ publicKey: 'qa_pk_test_REPLACE_ME' });
+      await QuickAuth.init({
+        // Your backend mints this; see the README. The SDK refreshes it for you.
+        onTokenExpiry: async () => {
+          const r = await fetch('https://my-app.com/api/quickauth-token');
+          return (await r.json()).sessionToken;
+        },
+        // One handler, every outcome. This is the source of truth for the UI —
+        // the awaited calls below only tell you the request was dispatched.
+        onAuthEvent: (event) => {
+          switch (event.type) {
+            case 'OTP_SENT':
+              setError(null);
+              setSessionId(event.sessionId);
+              break;
+            case 'OTP_AUTO_READ':
+              // Fires whether or not anything called observeOTP, and on both
+              // the SMS and the WhatsApp path.
+              setCode(event.code);
+              break;
+            case 'VERIFIED':
+              // Forward requestId to your backend, which confirms it with
+              // QuickAuth server-to-server and mints its own session.
+              setRequestId(event.requestId);
+              break;
+            case 'OTP_FAILED':
+            case 'ERROR':
+              setError(event.message);
+              break;
+          }
+        },
+      });
       QuickAuth.consent.set(true); // assume in-app consent dialog has run
       const attribution = await QuickAuth.attribution.captureLaunch();
       // eslint-disable-next-line no-console
       console.log('[QuickAuth] launch attribution', attribution);
-    })();
+    })().catch((e) => setError((e as Error).message));
   }, []);
 
   return (
@@ -70,21 +101,37 @@ export default function App(): React.ReactElement {
               onCodeFilled={async (filled) => {
                 try {
                   await QuickAuth.auth.submitOtp(filled);
-                  // Outcome arrives via Config.onAuthEvent — when VERIFIED
-                  // fires, route to the post-login screen there.
+                  // Outcome arrives on onAuthEvent above.
                 } catch (e) {
                   setError((e as Error).message);
                 }
               }}
             />
+
+            {/* No arguments: it repeats the attempt already in flight, with the
+                same channel and autoSubmit setting, and re-sends the WhatsApp
+                handshake that Meta expires after ten minutes. */}
+            <Pressable
+              onPress={async () => {
+                try {
+                  setCode('');
+                  await QuickAuth.auth.resendOtp();
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }}
+              style={{ marginTop: 16 }}
+            >
+              <Text style={styles.label}>RESEND CODE</Text>
+            </Pressable>
           </>
         )}
 
-        {jwt && (
+        {requestId && (
           <View style={styles.success}>
-            <Text style={styles.successText}>Logged in</Text>
+            <Text style={styles.successText}>Verified</Text>
             <Text style={styles.jwt} numberOfLines={1}>
-              {jwt}
+              {requestId}
             </Text>
           </View>
         )}

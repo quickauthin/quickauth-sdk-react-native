@@ -1,8 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.quickauth.rnsdk">
+<!--
+    QuickAuth React Native SDK — Android manifest.
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    No `package="…"` attribute. AGP 8 dropped support for it — "Setting the namespace via the
+    package attribute in the source AndroidManifest.xml is no longer supported" — and a library
+    manifest that still declares one fails the consuming app's build on the early AGP 8 releases
+    that the React Native 0.73 and 0.74 templates ship. Later 8.x ignores it with a warning, so
+    the symptom depended on which template a merchant started from. Since every current React
+    Native template is on AGP 8, this one attribute was the difference between the SDK building
+    and not. The namespace lives in android/build.gradle, where AGP wants it, and is the same
+    value it always was: io.quickauth.rnsdk.
+
+    No permissions either. This manifest used to declare RECEIVE_SMS, which the SDK has never
+    needed — Google's SMS Retriever delivers OTP messages via a system broadcast scoped to the
+    receiving app's hash, precisely so an app does not have to ask for SMS access. A library
+    manifest merges into every app that depends on it, and RECEIVE_SMS is in Google Play's
+    restricted set: an app declaring it must justify the use in a Play Console declaration or be
+    removed from the store. Declaring one the SDK never uses created a review problem for every
+    merchant in exchange for nothing. INTERNET is likewise dropped; every React Native app
+    already declares it, and a library forcing it in hides that from the app that actually needs
+    it.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Android 11 (API 30) filters which other apps a package can see, and that filtering
+        applies to an explicit broadcast just as it does to a query: setPackage("com.whatsapp")
+        on a device where WhatsApp is invisible to us delivers nothing.
+
+        The OTP_REQUESTED handshake in QuickAuthSmsRetrieverModule is exactly that kind of
+        broadcast, so without this an app targeting API 30+ — which is every app now — silently
+        fails to hand WhatsApp the handshake, and zero-tap cannot work no matter how correct the
+        template, the signing hash and the receiver are. Nothing throws; the broadcast is simply
+        dropped.
+
+        Both packages, because the user's code arrives on whichever WhatsApp they have. Mirrors
+        WHATSAPP_PACKAGES in QuickAuthSmsRetrieverModule; change the two together.
+    -->
+    <queries>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+    </queries>
+
+    <application>
+        <!--
+            WhatsApp delivers a zero-tap or one-tap code by broadcasting to the app, not by SMS,
+            so Google's SmsRetriever never sees it. Declared statically rather than registered at
+            runtime because zero-tap's whole promise is that the user does nothing: the code can
+            arrive while the app is backgrounded or not running, and a runtime receiver would
+            only exist when the app already does.
+
+            No android:permission, deliberately. It is tempting to restrict the sender, and
+            guessing at a WhatsApp-owned permission name would be the worst mistake available
+            here, because Android silently refuses to deliver a broadcast to a receiver guarded by
+            a permission the sender does not hold. The receiver would never fire, nothing would
+            throw, and the symptom would be "zero-tap does not work" with no error to chase.
+            Meta's documented receiver declares exported="true" and no permission.
+
+            What keeps this safe is WhatsApp's own check, not ours: it only broadcasts to an app
+            whose package name AND 11-character signing hash match the ones on the approved
+            template. An attacker cannot satisfy that without the merchant's signing key. The
+            receiver additionally rejects anything that is not a plausible code.
+
+            The action string is duplicated in WhatsAppOtpReceiver.ACTION_OTP_RETRIEVED — a
+            manifest cannot reference a Java constant. Change both together.
+        -->
+        <receiver
+            android:name="io.quickauth.rnsdk.WhatsAppOtpReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.whatsapp.otp.OTP_RETRIEVED" />
+            </intent-filter>
+        </receiver>
+    </application>
 
 </manifest>

@@ -1,4 +1,9 @@
-import type { AuthEventHandler, QuickAuthConfig, TokenProvider } from '../types';
+import type {
+  AuthEventHandler,
+  QuickAuthConfig,
+  QuickAuthStorageAdapter,
+  TokenProvider,
+} from '../types';
 
 export type { TokenProvider };
 
@@ -11,6 +16,7 @@ export interface ResolvedConfig {
   requestTimeoutMs: number;
   silent: boolean;
   onAuthEvent: AuthEventHandler | null;
+  storage: QuickAuthStorageAdapter | null;
 }
 
 const DEFAULTS = {
@@ -65,8 +71,27 @@ export function setConfig(input: QuickAuthConfig): ResolvedConfig {
     requestTimeoutMs: input.requestTimeoutMs ?? DEFAULTS.requestTimeoutMs,
     silent: input.silent ?? DEFAULTS.silent,
     onAuthEvent: typeof input.onAuthEvent === 'function' ? input.onAuthEvent : null,
+    storage: input.storage ?? null,
   };
   return current;
+}
+
+/**
+ * Replace the auth event handler after `init()`.
+ *
+ * Screens usually want to attach their handler when they mount, not at app
+ * startup, and re-running `init()` to swap one callback would also rebuild the
+ * token manager and re-run the deep-link listener. Every other field stays as
+ * it was: `apiBaseUrl`, timeouts and the token provider are captured by the
+ * request path and the token manager, so a general `setConfig` after init
+ * would take effect or not depending on which subsystem happened to re-read
+ * the field.
+ *
+ * Pass `null` to detach.
+ */
+export function setAuthEventHandler(handler: AuthEventHandler | null): void {
+  const cfg = getConfig();
+  cfg.onAuthEvent = typeof handler === 'function' ? handler : null;
 }
 
 export function getConfig(): ResolvedConfig {

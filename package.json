@@ -1,6 +1,6 @@
 {
-  "name": "@quickauth/react-native",
-  "version": "1.1.0",
+  "name": "@quickauthin/react-native",
+  "version": "1.2.0",
   "description": "QuickAuth React Native SDK — phone OTP authentication and WhatsApp marketing attribution",
   "homepage": "https://quickauth.in",
   "repository": {
@@ -20,6 +20,7 @@
   "source": "src/index.ts",
   "files": [
     "src",
+    "scripts",
     "lib",
     "android",
     "ios",
@@ -30,10 +31,13 @@
     "!**/__mocks__"
   ],
   "scripts": {
+    "version:sync": "node scripts/sync-version.js",
+    "prebuild": "node scripts/sync-version.js",
     "build": "bob build",
+    "pretest": "node scripts/sync-version.js --check",
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "prepare": "bob build"
+    "prepare": "npm run build"
   },
   "keywords": [
     "react-native",
@@ -49,13 +53,9 @@
   "author": "QuickAuth <contact@quickauth.in>",
   "license": "MIT",
   "peerDependencies": {
+    "@react-native-async-storage/async-storage": ">=1.17.0",
     "react": ">=18.0.0",
     "react-native": ">=0.72.0"
-  },
-  "peerDependenciesMeta": {
-    "@react-native-async-storage/async-storage": {
-      "optional": true
-    }
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
@@ -75,7 +75,8 @@
       "<rootDir>/__tests__/**/*.test.tsx"
     ],
     "moduleNameMapper": {
-      "^react-native$": "<rootDir>/__tests__/__mocks__/react-native.ts"
+      "^react-native$": "<rootDir>/__tests__/__mocks__/react-native.ts",
+      "^@react-native-async-storage/async-storage$": "<rootDir>/__tests__/__mocks__/async-storage.ts"
     },
     "transform": {
       "^.+\\.tsx?$": [
@@ -92,15 +93,21 @@
     "targets": [
       [
         "commonjs",
-        { "esm": false }
+        {
+          "esm": false
+        }
       ],
       [
         "module",
-        { "esm": false }
+        {
+          "esm": false
+        }
       ],
       [
         "typescript",
-        { "project": "tsconfig.build.json" }
+        {
+          "project": "tsconfig.build.json"
+        }
       ]
     ]
   }

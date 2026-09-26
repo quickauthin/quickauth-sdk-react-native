@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 buildscript {
     ext.safeExtGet = { prop, fallback ->
         rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
@@ -13,7 +15,16 @@ buildscript {
 
 apply plugin: 'com.android.library'
 
+// The SDK version has exactly one home: package.json. The npm publish workflow bumps it there
+// (npm version), src/version.ts is generated from it, ios/QuickAuthRnSdk.podspec parses it, and
+// this reads it — so an Android build can never report a version the JS half does not.
+def quickauthPackageJson = new JsonSlurper().parseText(file("${projectDir}/../package.json").text)
+def quickauthSdkVersion = quickauthPackageJson.version
+
 android {
+    // AGP 8 requires the namespace here. It used to *also* be declared as package="…" in
+    // src/main/AndroidManifest.xml, which AGP 8 rejects outright — that duplicate broke the
+    // build of every app consuming this package. The manifest no longer declares it.
     namespace 'io.quickauth.rnsdk'
     compileSdkVersion safeExtGet('compileSdkVersion', 34)
 
@@ -21,7 +32,7 @@ android {
         minSdkVersion safeExtGet('minSdkVersion', 21)
         targetSdkVersion safeExtGet('targetSdkVersion', 34)
         versionCode 1
-        versionName "0.1.0"
+        versionName quickauthSdkVersion
     }
 
     compileOptions {

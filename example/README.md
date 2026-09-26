@@ -1,6 +1,6 @@
 # QuickAuth RN — Example App
 
-A minimal app demonstrating both **headless** and **component** modes of `@quickauth/react-native`.
+A minimal app demonstrating both **headless** and **component** modes of `@quickauthin/react-native`.
 
 ## Run with React Native CLI
 
