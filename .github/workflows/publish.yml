@@ -1,15 +1,6 @@
 name: Publish to npm
 
-# Manual trigger. Goes to Actions → "Publish to npm" → Run workflow → enter
-# the version (e.g. 1.0.0 or 1.0.1) → click Run.
-#
-# The workflow bumps package.json, runs bob build + jest, publishes to npm,
-# commits the version bump, tags it as v<version>, and pushes both.
-#
-# One-time setup (per repo):
-#   Settings → Secrets and variables → Actions → New repository secret:
-#     NPM_TOKEN   — npm "Automation" token (NOT a granular token; needs
-#                   bypass-2FA enabled, otherwise publish requires OTP).
+# Requires NPM_TOKEN repo secret (npm Automation token, so publish skips 2FA).
 
 on:
   workflow_dispatch:
@@ -57,15 +48,9 @@ jobs:
         run: npm ci
 
       - name: Bump package.json to ${{ inputs.version }}
-        # The only place a version is written by hand. Everything else derives
-        # from it: src/version.ts (generated in prebuild), android/build.gradle
-        # (JsonSlurper) and ios/QuickAuthRnSdk.podspec (JSON.parse).
         run: npm version ${{ inputs.version }} --no-git-tag-version
 
       - name: Build (bob)
-        # react-native-builder-bob writes lib/commonjs, lib/module,
-        # lib/typescript — these are picked up by the package.json `files`
-        # field on publish.
         run: npm run build
 
       - name: Test
@@ -82,9 +67,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Commit version bump + tag + push
-        # src/version.ts is generated from package.json by the prebuild step, so
-        # it moves with the bump. android/build.gradle and the podspec read
-        # package.json directly and never change.
         run: |
           git add package.json package-lock.json src/version.ts
           git commit -m "chore(release): v${{ inputs.version }}"
@@ -94,9 +76,9 @@ jobs:
       - name: Summary
         run: |
           {
-            echo "## ✅ Published @quickauthin/react-native@${{ inputs.version }}"
+            echo "## ✅ Published @quick-auth/react-native-sdk@${{ inputs.version }}"
             echo ""
-            echo "- npm: https://www.npmjs.com/package/@quickauthin/react-native/v/${{ inputs.version }}"
+            echo "- npm: https://www.npmjs.com/package/@quick-auth/react-native-sdk/v/${{ inputs.version }}"
             echo "- Tag: \`v${{ inputs.version }}\`"
-            echo "- Install: \`npm install @quickauthin/react-native@${{ inputs.version }}\`"
+            echo "- Install: \`npm install @quick-auth/react-native-sdk@${{ inputs.version }}\`"
           } >> $GITHUB_STEP_SUMMARY

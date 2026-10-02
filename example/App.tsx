@@ -13,7 +13,7 @@ import QuickAuth, {
   QuickAuthOtpField,
   OtpChannel,
   colors,
-} from '@quickauthin/react-native';
+} from '@quick-auth/react-native-sdk';
 
 export default function App(): React.ReactElement {
   const [phone, setPhone] = useState('+919876543210');
@@ -30,8 +30,7 @@ export default function App(): React.ReactElement {
           const r = await fetch('https://my-app.com/api/quickauth-token');
           return (await r.json()).sessionToken;
         },
-        // One handler, every outcome. This is the source of truth for the UI —
-        // the awaited calls below only tell you the request was dispatched.
+        // Drive UI from these events; awaited calls only mean the request was sent.
         onAuthEvent: (event) => {
           switch (event.type) {
             case 'OTP_SENT':
@@ -39,8 +38,7 @@ export default function App(): React.ReactElement {
               setSessionId(event.sessionId);
               break;
             case 'OTP_AUTO_READ':
-              // Fires whether or not anything called observeOTP, and on both
-              // the SMS and the WhatsApp path.
+              // Fires for both SMS and WhatsApp, with or without observeOTP.
               setCode(event.code);
               break;
             case 'VERIFIED':
@@ -108,9 +106,8 @@ export default function App(): React.ReactElement {
               }}
             />
 
-            {/* No arguments: it repeats the attempt already in flight, with the
-                same channel and autoSubmit setting, and re-sends the WhatsApp
-                handshake that Meta expires after ten minutes. */}
+            {/* Repeats the current attempt (same channel and autoSubmit) and
+                re-sends the WhatsApp handshake, which expires after 10 min. */}
             <Pressable
               onPress={async () => {
                 try {

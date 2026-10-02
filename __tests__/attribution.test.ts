@@ -1,16 +1,23 @@
 import { __resetConfig, setConfig } from '../src/core/config';
 import { __resetTokenManager } from '../src/core/client';
 import * as consent from '../src/core/consent';
-import { __resetStorage } from '../src/core/storage';
+import { __resetStorage, createMemoryStorage, setStorageAdapter } from '../src/core/storage';
 import {
   __reset as resetCapture,
   capture,
   captureLaunch,
-  parseLaunchUrl,
+  readQaClid,
   getLastAttribution,
+  getQaClid,
   startLinkingListener,
 } from '../src/attribution/capture';
-import { fingerprint, fingerprintHash } from '../src/attribution/fingerprint';
+import { trackConversion } from '../src/attribution/track';
+import {
+  composeFingerprint,
+  fingerprint,
+  fingerprintHash,
+  fnv1a64,
+} from '../src/attribution/fingerprint';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const RN = require('react-native');
 
@@ -22,76 +29,129 @@ function makeJwt(expSeconds: number): string {
   return `${header}.${payload}.sig`;
 }
 
-describe('attribution/capture', () => {
+function respond(body: unknown) {
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    text: async () => JSON.stringify(body),
+  });
+}
+
+const sentBody = (i = 0) => JSON.parse(global.fetch.mock.calls[i][1].body);
+const settle = async () => {
+  for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 0));
+};
+
+describe('attribution — Flutter / Web wire format', () => {
   beforeEach(() => {
     __resetConfig();
     __resetTokenManager();
-    setConfig({
-      onTokenExpiry: async () => makeJwt(Math.floor(Date.now() / 1000) + 600),
-    });
+    setConfig({ onTokenExpiry: async () => makeJwt(Math.floor(Date.now() / 1000) + 600) });
     consent.__reset();
     __resetStorage();
+    setStorageAdapter(createMemoryStorage());
     resetCapture();
     RN.__testHelpers.setPlatform('android');
     RN.__testHelpers.setInitialUrl(null);
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      statusText: 'OK',
-      text: async () => '{}',
-    });
+    respond({ matched: false });
   });
 
-  it('parses utm + click params from launch URL', () => {
-    const out = parseLaunchUrl(
-      'myapp://open?utm_source=whatsapp&utm_medium=broadcast&utm_campaign=spring&qa_click_id=qac_42'
-    );
-    expect(out).toMatchObject({
-      source: 'whatsapp',
-      medium: 'broadcast',
-      campaign: 'spring',
-      clickId: 'qac_42',
-    });
-    expect(out.launchUrl).toContain('myapp://open');
+  it('reads qa_clid from the query string, then the fragment', () => {
+    expect(readQaClid('myapp://open?utm_source=wa&qa_clid=clid_1')).toBe('clid_1');
+    expect(readQaClid('https://x.in/l#qa_clid=clid_2&y=1')).toBe('clid_2');
+    expect(readQaClid('https://x.in/l?qa_clid=q#qa_clid=f')).toBe('q');
+    expect(readQaClid('https://x.in/l?gclid=abc')).toBeNull();
+    expect(readQaClid(null)).toBeNull();
   });
 
-  it('falls back to gclid then fbclid for clickId', () => {
-    expect(parseLaunchUrl('https://x?gclid=abc').clickId).toBe('abc');
-    expect(parseLaunchUrl('https://x?fbclid=def').clickId).toBe('def');
-    expect(parseLaunchUrl('https://x').clickId).toBeUndefined();
-  });
-
-  it('captureLaunch reads Linking.getInitialURL and stores payload', async () => {
-    RN.__testHelpers.setInitialUrl('myapp://?utm_source=email&utm_campaign=launch');
-    const payload = await captureLaunch();
-    expect(payload.source).toBe('email');
-    expect(payload.campaign).toBe('launch');
-    expect(payload.fingerprint.platform).toBe('android');
-    expect(getLastAttribution()).toBe(payload);
-  });
-
-  it('capture() fires /v1/sdk/attribution/launch only when consent granted', async () => {
-    await capture('myapp://?utm_source=fb');
-    expect(global.fetch).not.toHaveBeenCalled();
-
+  it('posts { qa_clid, fingerprint, deviceInfo } and returns the backend result', async () => {
     consent.set(true);
-    await capture('myapp://?utm_source=fb');
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-    const [url] = global.fetch.mock.calls[0];
-    expect(url).toContain('/v1/sdk/attribution/launch');
+    respond({ matched: true, qa_clid: 'clid_9', campaignId: 'cmp_1', templateId: 't1', variantId: 'v2' });
+
+    const result = await capture('myapp://open?qa_clid=clid_9');
+
+    expect(global.fetch.mock.calls[0][0]).toContain('/v1/sdk/attribution/launch');
+    const body = sentBody();
+    expect(body.qa_clid).toBe('clid_9');
+    expect(body.fingerprint).toMatchObject({ locale: 'en-US', screenW: 1170, screenH: 2532, dpr: 3 });
+    expect(body.fingerprint.anchor).toMatch(/^[0-9a-f]{32}$/);
+    expect(body.fingerprint.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(body.deviceInfo).toMatchObject({ platform: 'android', sdk: expect.stringMatching(/^react-native\//) });
+    expect(result).toEqual({ matched: true, qaClid: 'clid_9', campaignId: 'cmp_1', templateId: 't1', variantId: 'v2' });
+    expect(getLastAttribution()).toEqual(result);
+    expect(await getQaClid()).toBe('clid_9');
   });
 
-  it('startLinkingListener captures subsequent URLs', async () => {
+  it('sends no qa_clid for a plain launch', async () => {
+    consent.set(true);
+    await captureLaunch();
+    expect(sentBody().qa_clid).toBeUndefined();
+  });
+
+  it('queues the launch until consent is granted, then sends it', async () => {
+    RN.__testHelpers.setInitialUrl('myapp://?qa_clid=clid_q');
+    const result = await captureLaunch();
+    expect(result).toEqual({ matched: false });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(consent.pendingCount()).toBe(1);
+    expect(await getQaClid()).toBe('clid_q'); // kept for later
+
+    await consent.set(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(sentBody().qa_clid).toBe('clid_q');
+  });
+
+  it('the anchor is stable across launches', async () => {
+    consent.set(true);
+    const a = await composeFingerprint();
+    const b = await composeFingerprint();
+    expect(a.anchor).toBe(b.anchor);
+    expect(a.hash).toBe(b.hash);
+  });
+
+  it('a failed launch resolves { matched: false } instead of throwing', async () => {
+    consent.set(true);
+    global.fetch = jest.fn().mockRejectedValue(new Error('offline'));
+    setConfig({ onTokenExpiry: async () => makeJwt(Math.floor(Date.now() / 1000) + 600), maxRetries: 0 });
+    await expect(capture('myapp://?qa_clid=x')).resolves.toEqual({ matched: false });
+  });
+
+  it('the linking listener attributes only links that carry qa_clid', async () => {
     consent.set(true);
     startLinkingListener();
-    RN.__testHelpers.setInitialUrl(null);
-    RN.Linking.__emitUrl('myapp://?utm_source=push');
-    // Allow the async capture() chain to settle.
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(global.fetch).toHaveBeenCalled();
-    const last = getLastAttribution();
-    expect(last?.source).toBe('push');
+    RN.Linking.__emitUrl('myapp://settings');
+    await settle();
+    expect(global.fetch).not.toHaveBeenCalled();
+
+    RN.Linking.__emitUrl('myapp://promo?qa_clid=clid_live');
+    await settle();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(sentBody().qa_clid).toBe('clid_live');
+  });
+
+  it('trackConversion sends { event, value, currency, qa_clid, metadata }', async () => {
+    consent.set(true);
+    await capture('myapp://?qa_clid=clid_c');
+    global.fetch.mockClear();
+
+    await trackConversion({ event: 'purchase', value: 499, metadata: { sku: 'A1' } });
+
+    expect(global.fetch.mock.calls[0][0]).toContain('/v1/sdk/attribution/conversion');
+    expect(sentBody()).toEqual({
+      event: 'purchase',
+      value: 499,
+      currency: 'INR',
+      qa_clid: 'clid_c',
+      metadata: { sku: 'A1' },
+    });
+  });
+
+  it('trackConversion maps the deprecated attributes to metadata', async () => {
+    consent.set(true);
+    await trackConversion({ event: 'signup', attributes: { plan: 'pro' } });
+    expect(sentBody().metadata).toEqual({ plan: 'pro' });
+    expect(sentBody().attributes).toBeUndefined();
   });
 
   it('fingerprint() returns platform + screen dims', () => {
@@ -99,13 +159,20 @@ describe('attribution/capture', () => {
     expect(fp.platform).toBe('android');
     expect(fp.screenWidth).toBe(390);
     expect(fp.screenHeight).toBe(844);
+    expect(fingerprintHash(fp)).toMatch(/^[0-9a-f]{8}$/);
   });
 
-  it('fingerprintHash is stable for same input', () => {
-    const fp = fingerprint();
-    const a = fingerprintHash(fp);
-    const b = fingerprintHash(fp);
-    expect(a).toBe(b);
-    expect(a).toMatch(/^[0-9a-f]{8}$/);
+  it('fnv1a64 matches a BigInt reference implementation', () => {
+    const ref = (s: string) => {
+      let h = BigInt('0xcbf29ce484222325');
+      for (const b of Buffer.from(s, 'utf8')) {
+        h ^= BigInt(b);
+        h = (h * BigInt('0x100000001b3')) & BigInt('0xffffffffffffffff');
+      }
+      return h.toString(16).padStart(16, '0');
+    };
+    for (const s of ['', 'a', 'hello world', '{"anchor":"x","locale":"en-IN","tz":330}', 'ünïcødé 🚀']) {
+      expect(fnv1a64(s)).toBe(ref(s));
+    }
   });
 });

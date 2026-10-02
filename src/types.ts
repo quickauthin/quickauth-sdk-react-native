@@ -1,5 +1,5 @@
 /**
- * QuickAuth React Native SDK — Public type definitions.
+ * QuickAuth React Native SDK public type definitions.
  */
 
 export enum OtpChannel {
@@ -9,9 +9,8 @@ export enum OtpChannel {
 }
 
 /**
- * Customer-supplied async function that mints a fresh QuickAuth session JWT by
- * calling the customer's own backend (which in turn calls
- * `POST /v1/sdk/session` server-to-server with X-Client-Id + X-Client-Secret).
+ * Returns a fresh session JWT from your backend, which calls
+ * `POST /v1/sdk/session` with X-Client-Id + X-Client-Secret.
  */
 export type TokenProvider = () => Promise<string>;
 
@@ -21,27 +20,31 @@ export type TokenProvider = () => Promise<string>;
 export type AuthEventHandler = (event: AuthEvent) => void;
 
 /**
- * Typed auth lifecycle events. The SDK guarantees that for any given
- * `initiate()` call, you'll see at most one terminal event
- * (`VERIFIED` / `OTP_FAILED` / `ERROR`) for that attempt. Calling
- * `initiate()` again resets the state machine.
+ * Auth lifecycle events. At most one terminal event (`VERIFIED` /
+ * `OTP_FAILED` / `ERROR`) per `initiate()` call.
  *
- * - `OTP_SENT` — backend dispatched an OTP. Render the input.
- * - `OTP_AUTO_READ` — a code the SDK read for the user, from Android's SMS
- *   Retriever or a WhatsApp zero-tap / one-tap broadcast. The SDK does not
- *   submit it unless `initiate({ autoSubmit: true })` asked it to.
- * - `VERIFIED` — user is authenticated. Covers fresh OTP success AND silent
- *   device-trust re-auth. Forward `requestId` to the merchant backend.
- * - `OTP_FAILED` — submitted code was rejected. SDK stays in awaiting-OTP
- *   so the user can retry.
- * - `ERROR` — transport / rate-limit / unexpected failure. Final.
+ * - `OTP_SENT`: OTP dispatched. Render the input.
+ * - `OTP_AUTO_READ`: code read from SMS Retriever or WhatsApp zero-tap/one-tap.
+ *   Only submitted if `initiate({ autoSubmit: true })`.
+ * - `VERIFIED`: authenticated (OTP or OneTap). Forward `requestId` to your backend.
+ * - `OTP_FAILED`: code rejected. User can retry.
+ * - `ERROR`: transport, rate-limit or unexpected failure. Final.
  */
 export type AuthEvent =
   | { type: 'OTP_SENT'; sessionId: string; channel: OtpChannel; expiresIn: number }
   | { type: 'OTP_AUTO_READ'; code: string }
   | { type: 'VERIFIED'; requestId: string; message?: string }
   | { type: 'OTP_FAILED'; message: string }
-  | { type: 'ERROR'; code: string; message: string };
+  | {
+      type: 'ERROR';
+      /** Category: RATE_LIMITED, SERVER_ERROR, CLIENT_ERROR or UNKNOWN_ERROR. */
+      code: string;
+      message: string;
+      /** The backend's own reason (e.g. `INVALID_CLIENT_CREDENTIALS`), when it sent one. */
+      errorCode?: string;
+      /** HTTP status, when the failure was an HTTP response. */
+      status?: number;
+    };
 
 export interface InitiateOptions {
   /** E.164 phone number, e.g. `+919876543210`. */
@@ -49,47 +52,37 @@ export interface InitiateOptions {
   /** Delivery channel preference. Server picks if omitted or `auto`. */
   channel?: OtpChannel;
   /**
-   * Verify an auto-read code without waiting for the merchant to forward it.
-   *
-   * Off by default: a merchant who wants to show the code landing in the
-   * field before it is spent should get that unless they ask otherwise.
-   *
-   * Guarded by a one-shot latch per attempt. A merchant on `auto` can receive
-   * the same code twice — once parsed out of the SMS, once broadcast by
-   * WhatsApp — and submitting the second would verify a code the server has
-   * already consumed, surfacing to the user as a failure arriving right after
-   * a success.
-   *
-   * Carried across `resendOtp()`, which repeats the request rather than
-   * starting a differently-configured one.
+   * Submit an auto-read code automatically. Default `false`. Submits at most
+   * once per attempt (SMS and WhatsApp may deliver the same code). Kept
+   * across `resendOtp()`.
    */
   autoSubmit?: boolean;
 }
 
 export interface ResetOptions {
-  /**
-   * Also clear the persistent device token. After reset, the next
-   * `initiate()` acts like a brand-new install (no OneTap). Use on
-   * user-initiated sign-out.
-   */
+  /** Also clear the device token, so the next `initiate()` skips OneTap. Use on sign-out. */
   forgetDevice?: boolean;
 }
 
 export interface QuickAuthConfig {
-  /** Override API base URL — defaults to https://api.quickauth.in */
+  /** API base URL. Default https://api.quickauth.in */
   apiBaseUrl?: string;
   /**
-   * Async callback invoked by the SDK whenever it needs a fresh session token.
-   * The SDK calls this on first request, ~30s before token expiry, and on a 401.
+   * Publishable key (`pk_live_…` / `pk_test_…`), safe to ship in the app.
+   * Scoped to OTP initiate/verify, locked to your app and rate-limited.
+   * Use exactly one of `publishableKey`, `onTokenExpiry` or `unsafe`.
+   */
+  publishableKey?: string;
+  /**
+   * Returns a fresh session token. Called on first request, ~30s before
+   * expiry, and on a 401. Use exactly one auth mode.
    */
   onTokenExpiry?: TokenProvider;
   /** Optional pre-warmed token used for the very first request. */
   initialToken?: string;
   /**
-   * UNSAFE escape hatch — for trusted-enterprise / server-rendered apps that
-   * already embed secrets. When provided, the SDK calls `/v1/sdk/session`
-   * directly with `X-Client-Id` + `X-Client-Secret` headers. NEVER ship this
-   * in a public mobile binary.
+   * UNSAFE: SDK calls `/v1/sdk/session` directly with the client secret.
+   * Trusted-enterprise/testing only. Never ship in a public app.
    */
   unsafe?: {
     clientId: string;
@@ -102,23 +95,17 @@ export interface QuickAuthConfig {
   /** Suppress console warnings. */
   silent?: boolean;
   /**
-   * Where the SDK persists the OneTap device token and the last attribution
-   * payload.
-   *
-   * Defaults to `@react-native-async-storage/async-storage`, a peer
-   * dependency. If it is not installed, `init()` throws rather than quietly
-   * keeping the device token in memory — a memory-only token means OneTap
-   * silently stops working after every cold start, which is invisible in
-   * development and expensive in production. Pass an adapter here (or
-   * `createMemoryStorage()`, to accept that trade-off deliberately).
+   * Initial DPDP/GDPR consent for attribution. Default `false`. A choice
+   * saved via `consent.set()` takes precedence.
+   */
+  consent?: boolean;
+  /**
+   * Storage for the OneTap device token and attribution data. Defaults to
+   * `@react-native-async-storage/async-storage`; `init()` throws if it is
+   * missing and no adapter is passed. `createMemoryStorage()` loses OneTap on restart.
    */
   storage?: QuickAuthStorageAdapter;
-  /**
-   * Headless auth event handler. The SDK invokes this with a typed
-   * `AuthEvent` as the auth lifecycle progresses. One handler per init;
-   * pass a new value to a subsequent `QuickAuth.init({ onAuthEvent })`
-   * to replace.
-   */
+  /** Receives `AuthEvent`s. Replace later with `QuickAuth.setAuthEventHandler()`. */
   onAuthEvent?: AuthEventHandler;
 }
 
@@ -128,13 +115,8 @@ export interface WhatsAppLoginParams {
 }
 
 /**
- * Persistent key-value storage the SDK uses for the device token (OneTap) and
- * the last captured attribution payload.
- *
- * Structurally identical to `@react-native-async-storage/async-storage`, so
- * that module satisfies it directly. Pass your own (MMKV, Keychain,
- * EncryptedStorage) via `QuickAuth.init({ storage })` when you would rather
- * not add AsyncStorage.
+ * Async key-value storage, compatible with AsyncStorage. Pass MMKV, Keychain,
+ * etc. via `QuickAuth.init({ storage })`.
  */
 export interface QuickAuthStorageAdapter {
   getItem(key: string): Promise<string | null>;
@@ -142,18 +124,46 @@ export interface QuickAuthStorageAdapter {
   removeItem(key: string): Promise<void>;
 }
 
-export interface AttributionPayload {
-  source?: string;
-  medium?: string;
-  campaign?: string;
-  content?: string;
-  term?: string;
-  /** Raw click ID from launch URL (qa_click_id, gclid, fbclid…). */
-  clickId?: string;
-  /** Original launch URL (deep link). */
-  launchUrl?: string;
-  fingerprint: DeviceFingerprint;
-  capturedAt: string;
+/** Backend result for an attribution launch. */
+export interface AttributionResult {
+  /** Whether the launch was matched to a campaign click. */
+  matched: boolean;
+  /** Click id (`qa_clid`), from the link or assigned by the backend. */
+  qaClid?: string;
+  campaignId?: string;
+  templateId?: string;
+  variantId?: string;
+}
+
+/** @deprecated Use {@link AttributionResult}. */
+export type AttributionPayload = AttributionResult;
+
+/** Fingerprint sent with attribution launches (same shape as the Flutter SDK). */
+export interface LaunchFingerprint {
+  /** Random id generated once per install. */
+  anchor: string;
+  locale: string;
+  /** UTC offset in minutes. */
+  tz: number;
+  /** Screen size in physical pixels. */
+  screenW: number | null;
+  screenH: number | null;
+  dpr: number | null;
+  /** 64-bit FNV-1a of the fields above. */
+  hash: string;
+}
+
+/** Device metadata sent as `deviceInfo` (same shape as the Flutter SDK). */
+export interface DeviceInfo {
+  platform: string;
+  osVersion?: string;
+  locale?: string;
+  timeZoneOffsetMinutes: number;
+  appVersion?: string;
+  appBuild?: string;
+  appId?: string;
+  /** `react-native/<version>` */
+  sdk: string;
 }
 
 export interface DeviceFingerprint {
@@ -171,6 +181,9 @@ export interface ConversionEvent {
   event: string;
   value?: number;
   currency?: string;
+  /** Free-form properties stored with the conversion. */
+  metadata?: Record<string, unknown>;
+  /** @deprecated Use `metadata`. Sent as `metadata`. */
   attributes?: Record<string, unknown>;
 }
 

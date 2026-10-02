@@ -1,18 +1,9 @@
 /**
  * Persistent key-value storage for the device token and last attribution.
  *
- * The device token is what OneTap is: the backend hands it back on
- * `/initiate`, the SDK replays it on the next one, and the user is verified
- * without an OTP. It only works if the token outlives the process.
- *
- * This module used to duck-type `@react-native-async-storage/async-storage`
- * and, when it was not installed, fall back to a `Map` — so everything
- * appeared to work in a session and OneTap silently never fired again after
- * a cold start. Nothing logged, nothing threw, and the merchant's own tests
- * (single session) passed. That is now a hard, immediate error at `init()`
- * instead: either the peer dependency is installed, or the app passes its own
- * adapter, or it explicitly opts into the memory adapter and accepts that
- * OneTap does not survive a restart.
+ * OneTap depends on the device token surviving a restart, so there is no
+ * implicit in-memory fallback. `init()` throws unless AsyncStorage is
+ * installed, an adapter is passed, or `createMemoryStorage()` is passed.
  */
 
 import type { QuickAuthStorageAdapter } from '../types';
@@ -22,7 +13,7 @@ export type { QuickAuthStorageAdapter };
 /** Explicitly injected via `QuickAuth.init({ storage })`. Wins over AsyncStorage. */
 let injected: QuickAuthStorageAdapter | null = null;
 
-/** Resolved backend — injected adapter or the AsyncStorage peer dependency. */
+/** Resolved backend: injected adapter or the AsyncStorage peer dependency. */
 let resolved: QuickAuthStorageAdapter | null = null;
 
 function looksLikeAdapter(candidate: unknown): candidate is QuickAuthStorageAdapter {
@@ -73,10 +64,8 @@ export function setStorageAdapter(adapter?: QuickAuthStorageAdapter | null): voi
 }
 
 /**
- * The storage backend, or a thrown error naming the three ways to supply one.
- *
- * Called eagerly by `init()` so the failure lands on the developer's very
- * first run rather than on a returning user's second launch weeks later.
+ * Returns the storage backend or throws with setup instructions.
+ * Called eagerly by `init()` so a missing backend fails on first run.
  */
 export function requireStorage(): QuickAuthStorageAdapter {
   if (resolved) return resolved;
@@ -97,10 +86,8 @@ export function hasStorage(): boolean {
 }
 
 /**
- * An in-memory adapter. Not a fallback the SDK picks on its own — it has to
- * be passed to `init({ storage })`, which is the point: losing OneTap across
- * restarts becomes a decision someone made rather than something that
- * happened.
+ * In-memory adapter. Must be passed explicitly to `init({ storage })`;
+ * OneTap will not survive an app restart.
  */
 export function createMemoryStorage(): QuickAuthStorageAdapter {
   const map = new Map<string, string>();
@@ -128,12 +115,8 @@ export async function removeItem(key: string): Promise<void> {
 }
 
 /**
- * Test-only — forget the injected adapter and the resolved backend.
- *
- * Also empties the backend when it advertises the test hook below, which the
- * SDK's own jest mock of AsyncStorage does and a real AsyncStorage never
- * will. Without that a key written by one test would still be there in the
- * next one.
+ * Test-only. Forgets the injected and resolved backend, and clears it if it
+ * exposes `__quickauthTestClear` (our jest AsyncStorage mock does).
  */
 export function __resetStorage(): void {
   const backend = injected ?? resolved;

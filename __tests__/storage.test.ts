@@ -1,15 +1,5 @@
-/**
- * Storage is a declared dependency, not a nice-to-have.
- *
- * The device token is what OneTap is. When it lived in a `Map` because
- * AsyncStorage happened not to be installed, everything worked for the length
- * of a session and silently stopped working across a cold start — invisible in
- * development, expensive in production, and impossible to notice from the SDK's
- * own behaviour. `init()` now says so instead.
- *
- * This whole file runs with AsyncStorage unresolvable, which is the case under
- * test.
- */
+// Runs with AsyncStorage unresolvable: init() must fail rather than fall back
+// to memory, which would lose the OneTap device token on cold start.
 
 jest.mock('@react-native-async-storage/async-storage', () => {
   throw new Error("Cannot find module '@react-native-async-storage/async-storage'");
@@ -60,8 +50,7 @@ describe('core/storage — an explicit dependency', () => {
     expect(message).toContain('@react-native-async-storage/async-storage');
     expect(message).toContain('init({ storage: myAdapter })');
     expect(message).toContain('createMemoryStorage()');
-    // OneTap is the thing that breaks, so the message says so rather than
-    // leaving the developer to work out why storage matters here.
+    // Names OneTap so the developer knows why storage is required.
     expect(message).toMatch(/OneTap/);
   });
 
@@ -127,8 +116,7 @@ describe('core/storage — an explicit dependency', () => {
     await initiate({ phone: '+919876543210' });
     expect(writes).toContainEqual(['qa_device_token', 'dtok_persisted']);
 
-    // A fresh process would reload it from the adapter — simulate by dropping
-    // only the in-memory cache.
+    // Simulate a fresh process: drop only the in-memory cache.
     __resetSession();
     await initiate({ phone: '+919876543210' });
     const second = JSON.parse(global.fetch.mock.calls[1][1].body);

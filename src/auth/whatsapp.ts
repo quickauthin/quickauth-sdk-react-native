@@ -1,10 +1,6 @@
 /**
- * Click-to-WhatsApp login — opens a chat with the merchant's business number
- * and a prefilled message, which the merchant's WhatsApp Business API side
- * turns into an authenticated session.
- *
- * Unrelated to WhatsApp OTP auto-read (see `whatsapp-otp.ts`), which is how a
- * code sent over WhatsApp reaches the app.
+ * Click-to-WhatsApp login: opens a chat with the business number and a
+ * prefilled message. Unrelated to OTP auto-read (see `whatsapp-otp.ts`).
  */
 
 import { Linking } from 'react-native';
@@ -24,13 +20,8 @@ function buildUrl(params: WhatsAppLoginParams): string {
 }
 
 /**
- * Open WhatsApp, or report that it could not be opened.
- *
- * Returns `false` rather than throwing when WhatsApp is not installed. A user
- * without WhatsApp is an ordinary condition — the merchant should fall back to
- * SMS — not an exception, and a throw on that path pushed every caller into a
- * try/catch that could not tell "not installed" from "you passed a bad
- * number". A bad number still throws, because that one is the caller's bug.
+ * Open a WhatsApp chat with the business number.
+ * @returns `false` if WhatsApp can't be opened (fall back to SMS). Throws on an invalid number.
  */
 export async function openWhatsApp(params: WhatsAppLoginParams): Promise<boolean> {
   const url = buildUrl(params);
@@ -41,10 +32,7 @@ export async function openWhatsApp(params: WhatsAppLoginParams): Promise<boolean
 }
 
 /**
- * Open WhatsApp, throwing when it is not installed.
- *
- * Kept for callers written against 1.x. New code should prefer
- * {@link openWhatsApp}.
+ * Like {@link openWhatsApp} but throws when WhatsApp can't be opened. Kept for 1.x callers.
  */
 export async function startWhatsAppLogin(params: WhatsAppLoginParams): Promise<void> {
   const opened = await openWhatsApp(params);

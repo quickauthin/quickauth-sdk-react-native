@@ -9,7 +9,7 @@
  */
 
 /** SDK version reported in the `X-QuickAuth-SDK-Version` request header. */
-export const SDK_VERSION = '1.2.0';
+export const SDK_VERSION = '1.0.1';
 
 /** Platform tag reported in the `X-QuickAuth-SDK` request header. */
 export const SDK_PLATFORM = 'react-native';

@@ -1,57 +1,119 @@
+/**
+ * WhatsApp / campaign attribution. Same wire format as the Flutter and Web SDKs.
+ *
+ * Stores `qa_clid` from the launch link (query or fragment) and posts
+ * `{ qa_clid?, fingerprint, deviceInfo }` to /v1/sdk/attribution/launch.
+ * Queued until consent is granted.
+ */
+
 import { Linking } from 'react-native';
 import { request } from '../core/client';
 import * as consent from '../core/consent';
 import * as storage from '../core/storage';
-import type { AttributionPayload } from '../types';
-import { fingerprint } from './fingerprint';
+import type { AttributionResult } from '../types';
+import { captureDeviceInfo } from './device-info';
+import { composeFingerprint } from './fingerprint';
 
-const STORAGE_KEY = 'qa.attribution';
+export const QA_CLID_KEY = 'qa.qa_clid';
+export const CAMPAIGN_KEY = 'qa.campaign_id';
 
-const UTM_KEYS: Array<[keyof AttributionPayload, string]> = [
-  ['source', 'utm_source'],
-  ['medium', 'utm_medium'],
-  ['campaign', 'utm_campaign'],
-  ['content', 'utm_content'],
-  ['term', 'utm_term'],
-];
+const NOT_MATCHED: AttributionResult = { matched: false };
 
-const CLICK_KEYS = ['qa_click_id', 'click_id', 'gclid', 'fbclid', 'ttclid'];
+let linkingSub: { remove(): void } | null = null;
+let lastResult: AttributionResult | null = null;
 
-export function parseLaunchUrl(url: string | null | undefined): Partial<AttributionPayload> {
-  if (!url) return {};
-  let parsedQuery: Record<string, string> = {};
-  try {
-    // RN Linking URLs may include custom schemes — split manually.
-    const qIdx = url.indexOf('?');
-    if (qIdx >= 0) {
-      const qs = url.slice(qIdx + 1).split('#')[0];
-      qs.split('&').forEach((pair) => {
-        if (!pair) return;
-        const [k, v] = pair.split('=');
-        if (k) parsedQuery[decodeURIComponent(k)] = decodeURIComponent((v ?? '').replace(/\+/g, ' '));
-      });
-    }
-  } catch {
-    parsedQuery = {};
-  }
-
-  const out: Partial<AttributionPayload> = { launchUrl: url };
-  UTM_KEYS.forEach(([target, src]) => {
-    if (parsedQuery[src]) (out as Record<string, unknown>)[target as string] = parsedQuery[src];
-  });
-  for (const k of CLICK_KEYS) {
-    if (parsedQuery[k]) {
-      out.clickId = parsedQuery[k];
-      break;
+function queryParam(qs: string, name: string): string | null {
+  for (const pair of qs.split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    const k = eq >= 0 ? pair.slice(0, eq) : pair;
+    const v = eq >= 0 ? pair.slice(eq + 1) : '';
+    try {
+      if (decodeURIComponent(k) === name) {
+        const value = decodeURIComponent(v.replace(/\+/g, ' '));
+        return value || null;
+      }
+    } catch {
+      /* malformed escape, skip this pair */
     }
   }
+  return null;
+}
+
+/** `qa_clid` from a link's query string, falling back to its fragment. */
+export function readQaClid(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const hashIdx = url.indexOf('#');
+  const beforeHash = hashIdx >= 0 ? url.slice(0, hashIdx) : url;
+  const fragment = hashIdx >= 0 ? url.slice(hashIdx + 1) : '';
+  const qIdx = beforeHash.indexOf('?');
+  const fromQuery = qIdx >= 0 ? queryParam(beforeHash.slice(qIdx + 1), 'qa_clid') : null;
+  if (fromQuery) return fromQuery;
+  return fragment ? queryParam(fragment.replace(/^\?/, ''), 'qa_clid') : null;
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === 'string' && v.length > 0 ? v : undefined;
+}
+
+function parseResult(json: unknown): AttributionResult {
+  const j = (json && typeof json === 'object' ? json : {}) as Record<string, unknown>;
+  const out: AttributionResult = { matched: j.matched === true };
+  const qaClid = str(j.qa_clid) ?? str(j.qaClid);
+  if (qaClid) out.qaClid = qaClid;
+  if (str(j.campaignId)) out.campaignId = j.campaignId as string;
+  if (str(j.templateId)) out.templateId = j.templateId as string;
+  if (str(j.variantId)) out.variantId = j.variantId as string;
   return out;
 }
 
-let linkingSub: { remove(): void } | null = null;
-let lastCaptured: AttributionPayload | null = null;
+async function sendLaunch(qaClid: string | null): Promise<AttributionResult> {
+  const body: Record<string, unknown> = {
+    fingerprint: await composeFingerprint(),
+    deviceInfo: captureDeviceInfo(),
+  };
+  if (qaClid) body.qa_clid = qaClid;
+  const json = await request({ method: 'POST', path: '/v1/sdk/attribution/launch', body });
+  const result = parseResult(json);
+  lastResult = result;
+  try {
+    if (result.qaClid) await storage.setItem(QA_CLID_KEY, result.qaClid);
+    if (result.campaignId) await storage.setItem(CAMPAIGN_KEY, result.campaignId);
+  } catch {
+    /* noop */
+  }
+  return result;
+}
 
-export async function captureLaunch(): Promise<AttributionPayload> {
+/**
+ * Attribute a launch from `url`. Never throws; resolves `{ matched: false }`
+ * if consent is pending (call is queued) or the request fails.
+ */
+export async function capture(url: string | null | undefined): Promise<AttributionResult> {
+  const qaClid = readQaClid(url);
+  if (qaClid) {
+    try {
+      await storage.setItem(QA_CLID_KEY, qaClid);
+    } catch {
+      /* noop */
+    }
+  }
+
+  if (!consent.get()) {
+    void consent.run(async () => {
+      await sendLaunch(qaClid);
+    });
+    return { ...NOT_MATCHED };
+  }
+  try {
+    return await sendLaunch(qaClid);
+  } catch {
+    return { ...NOT_MATCHED };
+  }
+}
+
+/** Attribute the link the app was opened with (or a plain launch). */
+export async function captureLaunch(): Promise<AttributionResult> {
   let url: string | null = null;
   try {
     url = await Linking.getInitialURL();
@@ -61,51 +123,16 @@ export async function captureLaunch(): Promise<AttributionPayload> {
   return capture(url);
 }
 
-export async function capture(url: string | null | undefined): Promise<AttributionPayload> {
-  const fp = fingerprint();
-  const parsed = parseLaunchUrl(url);
-  const payload: AttributionPayload = {
-    fingerprint: fp,
-    capturedAt: new Date().toISOString(),
-    ...parsed,
-  };
-
-  lastCaptured = payload;
-
-  try {
-    await storage.setItem(STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    /* noop */
-  }
-
-  if (consent.get()) {
-    try {
-      await request({
-        method: 'POST',
-        path: '/v1/sdk/attribution/launch',
-        body: payload,
-      });
-    } catch {
-      /* swallow — attribution is best-effort */
-    }
-  }
-  return payload;
-}
-
-/**
- * Subscribe to subsequent deep links opened while the app is foregrounded.
- * Auto-called by init().
- */
+/** Attribute links received while running. Only links with `qa_clid` are sent. */
 export function startLinkingListener(): { remove(): void } {
   if (linkingSub) return linkingSub;
   const handler = (event: { url: string }) => {
-    void capture(event.url);
+    if (readQaClid(event?.url)) void capture(event.url);
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const sub = (Linking as any).addEventListener?.('url', handler);
   linkingSub = {
     remove: () => {
-      // RN <0.65 returned void from addEventListener; >=0.65 returns subscription
       if (sub && typeof sub.remove === 'function') {
         sub.remove();
       } else {
@@ -118,15 +145,28 @@ export function startLinkingListener(): { remove(): void } {
   return linkingSub;
 }
 
-export function getLastAttribution(): AttributionPayload | null {
-  return lastCaptured;
+/** The last launch result received from the backend in this process. */
+export function getLastAttribution(): AttributionResult | null {
+  return lastResult;
 }
 
-/** Test-only. */
+/** The stored `qa_clid`, if any link carried one. */
+export async function getQaClid(): Promise<string | null> {
+  try {
+    return await storage.getItem(QA_CLID_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export function __reset(): void {
-  lastCaptured = null;
+  lastResult = null;
   if (linkingSub) {
-    linkingSub.remove();
+    try {
+      linkingSub.remove();
+    } catch {
+      /* noop */
+    }
     linkingSub = null;
   }
 }

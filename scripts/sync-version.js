@@ -1,20 +1,10 @@
 #!/usr/bin/env node
 /**
- * Keeps `src/version.ts` in step with `package.json`.
+ * Generates `src/version.ts` from `package.json`.
  *
- * The SDK version is reported to the backend on every request
- * (`X-QuickAuth-SDK-Version`), which means it has to exist as a JavaScript
- * value — and `package.json` cannot be imported from `src/` without landing
- * outside `rootDir` and breaking `tsc`'s declaration output. So it is
- * generated here instead of typed twice.
- *
- * There is exactly one place a human edits the version: `package.json`
- * (usually via `npm version`, which the publish workflow runs). Everything
- * else derives from it:
- *
- *   - `src/version.ts`      — written by this script (`npm run build` → prebuild)
- *   - `android/build.gradle`— reads package.json directly via JsonSlurper
- *   - `ios/QuickAuthRnSdk.podspec` — reads package.json directly
+ * Importing package.json from `src/` would fall outside `rootDir` and break
+ * tsc declaration output. android/build.gradle and the podspec read
+ * package.json directly.
  *
  * Usage:
  *   node scripts/sync-version.js           # write src/version.ts

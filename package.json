@@ -1,6 +1,6 @@
 {
-  "name": "@quickauthin/react-native",
-  "version": "1.2.0",
+  "name": "@quick-auth/react-native-sdk",
+  "version": "1.0.1",
   "description": "QuickAuth React Native SDK — phone OTP authentication and WhatsApp marketing attribution",
   "homepage": "https://quickauth.in",
   "repository": {
@@ -16,16 +16,18 @@
   "main": "lib/commonjs/index.js",
   "module": "lib/module/index.js",
   "types": "lib/typescript/index.d.ts",
-  "react-native": "src/index.ts",
-  "source": "src/index.ts",
+  "react-native": "lib/module/index.js",
   "files": [
     "src",
-    "scripts",
     "lib",
     "android",
+    "!android/build",
+    "!android/.gradle",
+    "!android/.cxx",
+    "!android/src/test",
     "ios",
-    "react-native.config.js",
     "QuickAuthRnSdk.podspec",
+    "react-native.config.js",
     "!**/__tests__",
     "!**/__fixtures__",
     "!**/__mocks__"

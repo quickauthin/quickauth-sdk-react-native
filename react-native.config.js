@@ -7,7 +7,7 @@ module.exports = {
         packageInstance: 'new QuickAuthRnSdkPackage()',
       },
       ios: {
-        podspecPath: './QuickAuthRnSdk.podspec',
+        podspecPath: require('path').join(__dirname, 'QuickAuthRnSdk.podspec'),
       },
     },
   },

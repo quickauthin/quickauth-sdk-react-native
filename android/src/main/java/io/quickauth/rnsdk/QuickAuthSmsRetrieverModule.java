@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
 import android.content.pm.SigningInfo;
@@ -33,21 +34,16 @@ import com.google.android.gms.common.api.Status;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * The native half of QuickAuth auto-read: Google's SMS Retriever and WhatsApp's zero-tap /
- * one-tap broadcast.
- *
- * <p>Both live in one module because they are two delivery mechanisms for one thing, matched on
- * the same 11-character app hash. Codes reach JavaScript as {@code qa.sms.code} and
- * {@code qa.whatsapp.code} device events.
- *
- * <p>SMS Retriever requires the message body to end with the app hash from
- * {@link #getAppHash(Promise)}; WhatsApp requires the same hash on the approved template.
+ * OTP auto-read via SMS Retriever and WhatsApp zero-tap/one-tap. Both match on the same app hash.
+ * Emits {@code qa.sms.code} and {@code qa.whatsapp.code}.
  */
 public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
     private static final String TAG = "QuickAuthWaOtp";
@@ -55,46 +51,30 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
     private static final String WHATSAPP_EVENT_NAME = "qa.whatsapp.code";
 
     /**
-     * Keyword-anchored code, e.g. "your OTP is 483920" or "code: 4821".
-     *
-     * <p>Only punctuation, whitespace and a short "is"/"are" may sit between the keyword and the
-     * digits. A looser gap swallows the wrong number in bodies like "Your OTP for order 4471029 is
-     * 483920", where an unrelated reference number is the nearer match — there the gap fails and we
-     * fall through to {@link #FALLBACK_CODE}.
+     * Keyword-anchored code, e.g. "your OTP is 483920" or "code: 4821". Gap is kept tight so
+     * "OTP for order 4471029 is 483920" doesn't match the order number.
      */
     private static final Pattern KEYWORD_CODE = Pattern.compile(
             "(?:otp|code|pin|password)[\\s:=.,\\-\u2013\u2014]{0,6}(?:is|are)?"
                     + "[\\s:=.,\\-\u2013\u2014]{0,6}\\b(\\d{4,8})\\b",
             Pattern.CASE_INSENSITIVE);
 
-    /**
-     * Any standalone 4–8 digit run. The word boundaries keep this off part of a longer run, so
-     * 10-digit mobile numbers and 12-digit E.164 numbers are skipped rather than truncated into
-     * something that looks like a plausible code.
-     */
+    /** Standalone 4-8 digit run. Word boundaries skip longer runs like phone numbers. */
     private static final Pattern FALLBACK_CODE = Pattern.compile("\\b(\\d{4,8})\\b");
 
-    /**
-     * The 11-character app hash that terminates every SMS Retriever body. It is base64 over
-     * [A-Za-z0-9+/], so it can contain a digit run flanked by '+' or '/' that reads exactly like a
-     * standalone code. Strip it before scanning.
-     */
+    /** Trailing 11-char app hash. Base64, so it can contain digit runs; strip before scanning. */
     private static final Pattern APP_HASH_SUFFIX = Pattern.compile("\\s+[A-Za-z0-9+/]{11}\\s*$");
 
-    /** Google's app hash is 9 bytes of the digest, base64-encoded to 11 characters. */
+    /** App hash: first 9 bytes of SHA-256, base64 to 11 chars. */
     private static final int NUM_HASHED_BYTES = 9;
     private static final int NUM_BASE64_CHARS = 11;
 
-    /** Meta's handshake action, broadcast to WhatsApp before the template is sent. */
     private static final String ACTION_OTP_REQUESTED = "com.whatsapp.otp.OTP_REQUESTED";
 
-    /** Meta's name for the caller-identity PendingIntent. */
+    /** Caller-identity PendingIntent extra. */
     private static final String EXTRA_CALLER_IDENTITY = "_ci_";
 
-    /**
-     * Consumer WhatsApp and WhatsApp Business — the code arrives on whichever is installed.
-     * Mirrored by {@code <queries>} in the SDK manifest; both lists must change together.
-     */
+    /** Keep in sync with {@code <queries>} in AndroidManifest.xml. */
     private static final List<String> WHATSAPP_PACKAGES =
             Arrays.asList("com.whatsapp", "com.whatsapp.w4b");
 
@@ -112,6 +92,25 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
     @Override
     public String getName() {
         return "QuickAuthSmsRetriever";
+    }
+
+    /** packageName is sent as X-QuickAuth-Package; version fields go in deviceInfo. */
+    @Override
+    public Map<String, Object> getConstants() {
+        final Map<String, Object> constants = new HashMap<>();
+        final String pkg = reactContext.getPackageName();
+        constants.put("packageName", pkg);
+        try {
+            PackageInfo info = reactContext.getPackageManager().getPackageInfo(pkg, 0);
+            if (info.versionName != null) constants.put("appVersion", info.versionName);
+            long build = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? info.getLongVersionCode()
+                    : info.versionCode;
+            constants.put("appBuild", String.valueOf(build));
+        } catch (PackageManager.NameNotFoundException ignored) {
+            // Can't happen for our own package.
+        }
+        return constants;
     }
 
     // -- SMS Retriever ------------------------------------------------------
@@ -150,13 +149,7 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
         }
     }
 
-    /**
-     * Every app hash valid for this install — one per signing certificate.
-     *
-     * <p>An app that has rotated its signing key (v3) has more than one, and every one of them has
-     * to be registered with the OTP sender or messages to devices holding the other certificate
-     * are never delivered.
-     */
+    /** One hash per signing cert. Apps with rotated keys have several; register all of them. */
     @ReactMethod
     public void getAppHashes(final Promise promise) {
         try {
@@ -170,10 +163,7 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
 
     // -- WhatsApp zero-tap / one-tap ---------------------------------------
 
-    /**
-     * Attach the bridge to the manifest-declared receiver, flushing any code it is holding from
-     * before JavaScript was listening.
-     */
+    /** Subscribe to WhatsAppOtpReceiver; any held code is flushed on attach. */
     @ReactMethod
     public void startWhatsAppOtpListener(final Promise promise) {
         if (whatsAppListener == null) {
@@ -194,23 +184,8 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
     }
 
     /**
-     * Tell WhatsApp a code is about to be requested, and that this app may receive it.
-     *
-     * <p>Zero-tap does not work without this, and nothing says so. Meta requires the app to
-     * broadcast a handshake BEFORE the template is sent. Without it WhatsApp receives the message
-     * and shows it, and simply never broadcasts the code. Every other check can pass — template
-     * approved, package matching, signing hash matching, receiver declared — and the OTP still does
-     * not auto-fill, with no error anywhere to explain it.
-     *
-     * <p>The {@link PendingIntent} in {@code _ci_} is how WhatsApp identifies the caller. It
-     * carries no action and is never sent; WhatsApp reads the creator's identity off it, which is
-     * why it must be immutable — a mutable one would let another app fill it in.
-     *
-     * <p>Broadcast to both WhatsApp and WhatsApp Business, because the user's code arrives on
-     * whichever they have. Sending to a package that is not installed is a no-op rather than an
-     * error, so there is nothing to check first.
-     *
-     * <p>Never rejects: a missing handshake costs auto-read, not the login.
+     * Handshake must be sent before the OTP request or WhatsApp won't broadcast the code.
+     * Never rejects; failure only loses auto-read.
      */
     @ReactMethod
     public void sendWhatsAppOtpHandshake(final Promise promise) {
@@ -218,25 +193,21 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
             Context ctx = reactContext.getApplicationContext();
             String requestId = UUID.randomUUID().toString();
 
-            // No action and FLAG_IMMUTABLE: this is an identity token, not something to fire.
-            // FLAG_IMMUTABLE only exists from API 23; below that the bit is simply not set, which
-            // is the platform's own pre-23 behaviour rather than a downgrade we chose.
+            // Identity token only, never sent. Must be immutable (API 23+).
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 flags |= PendingIntent.FLAG_IMMUTABLE;
             }
             PendingIntent identity = PendingIntent.getBroadcast(ctx, 0, new Intent(), flags);
 
-            // Which WhatsApp packages this app can actually see. On API 30+ an invisible package
-            // swallows the broadcast silently, so reporting it is the difference between
-            // diagnosing that in one log line and chasing the template for a day.
+            // For logging only. API 30+ needs <queries> to see these packages.
             List<String> visible = new ArrayList<>();
             for (String pkg : WHATSAPP_PACKAGES) {
                 try {
                     ctx.getPackageManager().getPackageInfo(pkg, 0);
                     visible.add(pkg);
                 } catch (PackageManager.NameNotFoundException ignored) {
-                    // Not installed, or not visible to us.
+                    // Not installed or not visible.
                 }
             }
 
@@ -249,8 +220,6 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
             }
 
             if (visible.isEmpty()) {
-                // Either WhatsApp is not installed, or <queries> is missing from the merged
-                // manifest. Both mean the handshake reached nobody and zero-tap cannot work.
                 Log.w(TAG, "WhatsApp OTP handshake sent but NO WhatsApp package is visible — "
                         + "not installed, or <queries> missing from the merged manifest");
             } else {
@@ -259,7 +228,7 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
             }
             promise.resolve(requestId);
         } catch (Throwable t) {
-            // Never fail the OTP request over this. The user can still read the code and type it.
+            // Don't fail the OTP request; user can still type the code.
             Log.w(TAG, "WhatsApp OTP handshake failed: " + t.getMessage());
             promise.resolve(null);
         }
@@ -275,11 +244,12 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
     @ReactMethod public void addListener(String eventName) {}
     @ReactMethod public void removeListeners(Integer count) {}
 
+    // Use invalidate(), not onCatalystInstanceDestroy(); the latter isn't called in bridgeless mode.
     @Override
-    public void onCatalystInstanceDestroy() {
+    public void invalidate() {
         unregisterReceiver();
         detachWhatsAppListener();
-        super.onCatalystInstanceDestroy();
+        super.invalidate();
     }
 
     // -- Internals ----------------------------------------------------------
@@ -336,18 +306,8 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
     }
 
     /**
-     * Pull the OTP out of an SMS body.
-     *
-     * <p>This was {@code find()} over a bare {@code \b(\d{4,8})\b}, which returned the FIRST digit
-     * run in the message — so "Your OTP for order 4471029 is 483920" auto-filled the order number
-     * and the user watched the wrong code appear in the field, then watched it be rejected.
-     *
-     * <p>Prefers a keyword-anchored match; otherwise takes the LAST standalone run. Last, not
-     * first: senders put reference numbers, order ids and amounts ahead of the code far more often
-     * than after it. Mirrors the Flutter and Android SDKs, which fixed the same bug.
-     *
-     * <p>Package-private so it can be exercised directly if a JVM test source set is ever added to
-     * this module.
+     * Prefer keyword-anchored match, else last 4-8 digit run (reference numbers usually come first).
+     * Keep in sync with the Flutter and Android SDKs. Package-private for tests.
      */
     static String extractCode(String body) {
         if (body == null) return "";
@@ -364,22 +324,8 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
     }
 
     /**
-     * Every app hash valid for this install.
-     *
-     * <p>Two things were wrong with the path this replaces. It asked for {@code GET_SIGNATURES},
-     * deprecated since API 28 and flagged by Play's pre-launch report because it reports only the
-     * oldest certificate of an app that has rotated its signing key — so a rotated app computed a
-     * hash no current device would match. And it took only the first signature, which for a
-     * rotated app is the one that is no longer in use.
-     *
-     * <p>On API 28+ this reads {@code signingInfo}: {@code apkContentsSigners} for the certificate
-     * that actually signed the installed APK, plus the rotation history, so every hash a device
-     * might present is returned. Pre-28 there is no alternative and the deprecated call remains,
-     * where it is also correct — key rotation did not exist before API 28.
-     *
-     * <p>The hashed string is {@code "<package> <cert.toCharsString()>"}, per Google's
-     * AppSignatureHelper: the hash covers the certificate's string form, not a digest of its
-     * bytes. Nine bytes of the SHA-256, base64 with no padding, truncated to 11 characters.
+     * API 28+: current signers plus rotated signing certs. Pre-28 falls back to GET_SIGNATURES
+     * (no key rotation there).
      */
     private List<String> computeAppHashes() throws Exception {
         Context ctx = reactContext.getApplicationContext();
@@ -394,8 +340,7 @@ public class QuickAuthSmsRetrieverModule extends ReactContextBaseJavaModule {
             if (info != null) {
                 Signature[] current = info.getApkContentsSigners();
                 if (current != null) signatures.addAll(Arrays.asList(current));
-                // Rotation history exists only for a single-signer app; the platform returns
-                // null for a multi-signer one, which has no rotation to describe.
+                // History is null for multi-signer apps.
                 if (!info.hasMultipleSigners()) {
                     Signature[] history = info.getSigningCertificateHistory();
                     if (history != null) {

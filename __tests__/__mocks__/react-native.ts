@@ -1,7 +1,4 @@
-/**
- * Minimal react-native mock for unit tests. Pure TS — no React Native runtime
- * needed. Tests can override fields by re-importing and mutating.
- */
+// Minimal react-native mock. Tests override fields by mutating the import.
 
 type Listener = (...args: unknown[]) => void;
 
@@ -31,18 +28,20 @@ export const Platform = {
     (spec as Record<string, T>)[(Platform as { OS: string }).OS] ?? spec.default,
 };
 
-// One emitter for both auto-read events, keyed by event name — the real
-// NativeEventEmitter multiplexes the same way.
+// One emitter for both auto-read events, keyed by event name (as RN does).
 const smsEmitter = new MockEmitter();
 
 export const NativeModules: Record<string, unknown> = {
   QuickAuthSmsRetriever: {
+    // Constants the native module exports (Android getConstants / iOS constantsToExport).
+    packageName: 'com.example.app',
+    appVersion: '2.1.0',
+    appBuild: '42',
     start: jest.fn().mockResolvedValue(undefined),
     stop: jest.fn().mockResolvedValue(undefined),
     getAppHash: jest.fn().mockResolvedValue('TEST12HASH'),
     getAppHashes: jest.fn().mockResolvedValue(['TEST12HASH']),
-    // WhatsApp zero-tap / one-tap bridge. Presence of startWhatsAppOtpListener
-    // is what the JS side treats as "this native build supports it".
+    // WhatsApp bridge. JS treats startWhatsAppOtpListener as the support check.
     startWhatsAppOtpListener: jest.fn().mockResolvedValue(undefined),
     stopWhatsAppOtpListener: jest.fn().mockResolvedValue(undefined),
     sendWhatsAppOtpHandshake: jest.fn().mockResolvedValue('handshake-req-id'),
@@ -58,7 +57,7 @@ export const NativeModules: Record<string, unknown> = {
 export class NativeEventEmitter {
   // Match real RN: NativeEventEmitter accepts the native module as the source.
   constructor(_module?: unknown) {
-    /* noop — we route everything through the shared smsEmitter for tests */
+    /* noop: everything routes through smsEmitter */
   }
   addListener(event: string, cb: Listener) {
     return smsEmitter.addListener(event, cb);

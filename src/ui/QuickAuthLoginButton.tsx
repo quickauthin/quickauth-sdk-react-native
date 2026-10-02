@@ -18,17 +18,11 @@ export interface QuickAuthLoginButtonProps {
   channel?: OtpChannel;
   text?: string;
   /**
-   * Optional pre-filled OTP code. When provided, the button calls
-   * `submitOtp(code)` instead of `initiate()` — useful when the user has
-   * just typed a code into your own OTP input and you want to submit it.
-   * Outcomes (`OTP_SENT`, `VERIFIED`, `OTP_FAILED`, `ERROR`) arrive via
-   * `Config.onAuthEvent`.
+   * If set, the button calls `submitOtp(code)` instead of `initiate()`.
+   * Outcomes arrive via `Config.onAuthEvent`.
    */
   code?: string;
-  /**
-   * Called once the network call dispatched. Use `Config.onAuthEvent`
-   * to react to the actual outcome.
-   */
+  /** Called once `initiate()` is dispatched. Outcome arrives via `Config.onAuthEvent`. */
   onInitiated?: () => void;
   onError?: (error: Error) => void;
   style?: StyleProp<ViewStyle>;
@@ -37,9 +31,8 @@ export interface QuickAuthLoginButtonProps {
 }
 
 /**
- * Headless flow trigger. Tapping the button dispatches `initiate()` (or
- * `submitOtp(code)` if a code prop is provided). The merchant subscribes
- * to `Config.onAuthEvent` to drive UI from the resulting events.
+ * Calls `initiate()` on press, or `submitOtp(code)` when `code` is set.
+ * Drive UI from `Config.onAuthEvent`.
  */
 export function QuickAuthLoginButton(props: QuickAuthLoginButtonProps): React.ReactElement {
   const {

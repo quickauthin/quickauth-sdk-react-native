@@ -19,15 +19,9 @@ export interface QuickAuthOtpFieldProps {
   /** Subscribe to Android SMS Retriever; iOS relies on textContentType prop. */
   autoFillFromSms?: boolean;
   /**
-   * Forward a code the OS autofilled into this field back into the SDK, so it
-   * raises `OTP_AUTO_READ` and can auto-submit.
-   *
-   * This is the only auto-read path iOS has: `oneTimeCode` autofill drops the
-   * code straight into the field and the SDK is never told. Without this the
-   * `autoSubmit` option worked on Android and quietly did nothing on iOS.
-   *
-   * Only an all-at-once fill is forwarded — a user typing the last digit of a
-   * code they read themselves is not an auto-read. Set `false` to opt out.
+   * Forward OS-autofilled codes to the SDK (raises `OTP_AUTO_READ`, honours
+   * `autoSubmit`). Needed for iOS `oneTimeCode` autofill. Only all-at-once
+   * fills are forwarded, not typing. Default `true`.
    */
   forwardsAutofillToQuickAuth?: boolean;
   onCodeFilled?: (code: string) => void;
@@ -56,8 +50,7 @@ export function QuickAuthOtpField(props: QuickAuthOtpFieldProps): React.ReactEle
   const inputRef = useRef<TextInput | null>(null);
   const filledRef = useRef(false);
   const lengthRef = useRef(value.length);
-  // Set while the SDK itself is writing the field, so the forwarding below
-  // does not hand a code back to the SDK that came from it a moment ago.
+  // True while the SDK writes the field, so we don't forward its own code back.
   const fromSdkRef = useRef(false);
 
   const handleChange = useCallback(
@@ -67,8 +60,7 @@ export function QuickAuthOtpField(props: QuickAuthOtpFieldProps): React.ReactEle
       lengthRef.current = cleaned.length;
       onChangeText(cleaned);
 
-      // An OS autofill arrives as one change from (almost) nothing to the whole
-      // code; typing arrives one digit at a time.
+      // Autofill arrives as a single change to the full code; typing is per digit.
       const filledAtOnce =
         cleaned.length === digitCount && previousLength < digitCount - 1;
       if (filledAtOnce && forwardsAutofillToQuickAuth && !fromSdkRef.current) {

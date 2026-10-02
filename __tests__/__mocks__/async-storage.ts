@@ -1,16 +1,5 @@
-/**
- * Stands in for `@react-native-async-storage/async-storage`, which is a peer
- * dependency of the SDK and therefore present in any real app but not
- * installed in this repo (it carries native code and nothing here runs it).
- *
- * Mapped in package.json's jest `moduleNameMapper`, so the SDK's storage layer
- * resolves it exactly as it would on a device.
- *
- * `__quickauthTestClear` is the hook `storage.__resetStorage()` looks for: a
- * real AsyncStorage does not have it and is never emptied by the SDK, while
- * this one is emptied between tests so a key written by one test is not still
- * there in the next.
- */
+// Mock for the AsyncStorage peer dep, mapped via jest moduleNameMapper.
+// storage.__resetStorage() calls __quickauthTestClear between tests.
 
 const store = new Map<string, string>();
 

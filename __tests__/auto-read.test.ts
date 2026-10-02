@@ -1,12 +1,5 @@
-/**
- * Auto-read parity with the Flutter SDK: initiate() arms the code sources
- * itself, autoSubmit is off by default and latched when on, and resendOtp()
- * repeats the live attempt without being handed anything.
- *
- * Every test here covers something that was silently missing rather than
- * broken — the failures these guard against all look like "auto-fill just
- * doesn't happen for some users".
- */
+// Auto-read parity with the Flutter SDK: initiate() arms sources, autoSubmit
+// is opt-in and latched, resendOtp() repeats the live attempt.
 
 import { __resetConfig, setConfig } from '../src/core/config';
 import { __resetTokenManager } from '../src/core/client';
@@ -154,24 +147,21 @@ describe('auth/otp — auto-read, autoSubmit and resend', () => {
     await initiate({ phone: '+919876543210', autoSubmit: true });
     await flush();
 
-    // Same code, both channels — a merchant on `auto` gets exactly this.
+    // Same code on both channels, as `auto` delivers it.
     RN.__testHelpers.emitSmsCode({ code: '483920' });
     RN.__testHelpers.emitWhatsAppCode({ code: '483920' });
     await flush();
     await flush();
 
-    // Without the latch the second copy verifies a code the server has already
-    // consumed, and the user sees a failure land right after a success.
+    // Latch prevents verifying the same code twice.
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(events.filter((e) => e.type === 'OTP_AUTO_READ')).toHaveLength(1);
     expect(events.filter((e) => e.type === 'VERIFIED')).toHaveLength(1);
   });
 
   it('does not spend a second attempt when the duplicate arrives late', async () => {
-    // The copies do not always race: the WhatsApp one can land seconds after
-    // the SMS one has already been submitted and rejected, when the state
-    // machine is back in awaiting_otp and would happily submit it again —
-    // burning one of the user's three attempts on a code that just failed.
+    // Duplicate lands after the first copy was rejected and state is back in
+    // awaiting_otp; it must not be resubmitted.
     global.fetch.mockResolvedValueOnce(otpSent()).mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -263,7 +253,7 @@ describe('auth/otp — auto-read, autoSubmit and resend', () => {
 
     expect(bodyOf(1)).toMatchObject({ phone: '+919876543210', channel: 'whatsapp' });
 
-    // autoSubmit carried across: the resent code verifies itself.
+    // autoSubmit carries across the resend.
     global.fetch.mockResolvedValueOnce(verified());
     RN.__testHelpers.emitSmsCode({ code: '483920' });
     await flush();
@@ -304,8 +294,7 @@ describe('auth/otp — auto-read, autoSubmit and resend', () => {
   });
 
   it('opens a fresh SMS Retriever session for every request', async () => {
-    // Google's session lasts five minutes and covers one message. A resend that
-    // reused the first session would lose auto-read for a user who waited.
+    // A Retriever session lasts 5 min and covers one message, so resend restarts it.
     global.fetch.mockResolvedValueOnce(otpSent('s_1')).mockResolvedValueOnce(otpSent('s_2'));
     await initiate({ phone: '+919876543210' });
     await resendOtp();
@@ -332,8 +321,7 @@ describe('auth/otp — auto-read, autoSubmit and resend', () => {
 
     await initiate({ phone: '+919876543210' });
 
-    // WhatsApp checks for a live handshake when it receives the template, so
-    // one sent after the request is too late for the message already in flight.
+    // WhatsApp checks the handshake on receipt, so it must precede the request.
     expect(order).toEqual(['clear', 'handshake', 'initiate']);
   });
 
@@ -362,8 +350,7 @@ describe('auth/otp — auto-read, autoSubmit and resend', () => {
     await flush();
 
     expect(seen).toEqual(['483920']);
-    // Two live subscriptions, one event — a merchant driving their field from
-    // OTP_AUTO_READ must not see it filled, cleared and filled again.
+    // Two subscriptions, but OTP_AUTO_READ fires once.
     expect(events.filter((e) => e.type === 'OTP_AUTO_READ')).toHaveLength(1);
     sub.remove();
   });

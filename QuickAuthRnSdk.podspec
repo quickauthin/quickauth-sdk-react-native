@@ -1,6 +1,6 @@
 require 'json'
 
-package = JSON.parse(File.read(File.join(__dir__, '..', 'package.json')))
+package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 
 Pod::Spec.new do |s|
   s.name         = 'QuickAuthRnSdk'
@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.platforms    = { :ios => '12.0' }
   s.source       = { :git => 'https://github.com/quickauthin/quickauth-sdk-react-native.git', :tag => "v#{s.version}" }
 
-  s.source_files = 'QuickAuthRnSdk.{h,m}'
+  s.source_files = 'ios/*.{h,m}'
   s.requires_arc = true
 
   s.dependency 'React-Core'

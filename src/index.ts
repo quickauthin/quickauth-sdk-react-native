@@ -1,5 +1,5 @@
 /**
- * QuickAuth React Native SDK — public entry point.
+ * QuickAuth React Native SDK public entry point.
  *
  * Two usage modes:
  *   1. Headless: QuickAuth.auth.initiate({ phone }), QuickAuth.auth.submitOtp(code), …
@@ -35,8 +35,11 @@ import type {
   QuickAuthStorageAdapter,
   WhatsAppLoginParams,
   AttributionPayload,
+  AttributionResult,
   ConversionEvent,
   DeviceFingerprint,
+  DeviceInfo,
+  LaunchFingerprint,
 } from './types';
 
 export { OtpChannel } from './types';
@@ -52,26 +55,58 @@ export type {
   QuickAuthStorageAdapter,
   WhatsAppLoginParams,
   AttributionPayload,
+  AttributionResult,
   ConversionEvent,
   DeviceFingerprint,
+  DeviceInfo,
+  LaunchFingerprint,
 };
 
-/** An adapter that forgets everything when the process does. See `init({ storage })`. */
+/** In-memory storage adapter; does not survive restarts. See `init({ storage })`. */
 export { createMemoryStorage } from './core/storage';
 
-/** The one place the SDK version is defined — derived from package.json at build time. */
+/** SDK version, generated from package.json at build time. */
 export { SDK_VERSION, SDK_PLATFORM };
 
+/**
+ * Initialize the SDK. Choose ONE auth mode:
+ *
+ * 1. **Publishable Key (recommended)**, no backend needed:
+ *    ```ts
+ *    await QuickAuth.init({ publishableKey: 'pk_live_...' });
+ *    ```
+ *    Safe to embed: app-locked and rate-limited on the backend.
+ *
+ * 2. **Session Token**, requires your backend:
+ *    ```ts
+ *    await QuickAuth.init({
+ *      onTokenExpiry: async () => {
+ *        const res = await fetch('https://my-app.com/api/quickauth-token');
+ *        return (await res.json()).sessionToken;
+ *      }
+ *    });
+ *    ```
+ *    Your backend calls `/v1/sdk/session` server-to-server.
+ *
+ * 3. **Unsafe Mode** (testing only), embeds the client secret:
+ *    ```ts
+ *    await QuickAuth.init({
+ *      unsafe: { clientId: '...', clientSecret: '...' }
+ *    });
+ *    ```
+ */
 async function init(config: QuickAuthConfig): Promise<void> {
-  // Resolved before the config is installed, so a failed init leaves the SDK
-  // uninitialised rather than half-initialised. Eager, so a missing
-  // AsyncStorage fails on the developer's first run rather than showing up
-  // months later as "OneTap stopped working" for returning users.
+  // Resolve storage before installing config so a failed init leaves nothing
+  // half-set. Eager so a missing AsyncStorage fails on first run.
   storageApi.setStorageAdapter(config?.storage);
   storageApi.requireStorage();
   setConfig(config);
-  // Drop any cached TokenManager from a prior init — fresh config = fresh tokens.
+  // Drop any TokenManager cached by a prior init.
   __resetTokenManager();
+  // Re-read the device token from the (possibly new) storage on next use.
+  otpApi.invalidateDeviceTokenCache();
+  // Restore the user's saved consent choice (falls back to config.consent).
+  await consentApi.hydrate(config.consent === true);
   // Wire deep-link listener so subsequent URLs auto-attribute.
   try {
     captureApi.startLinkingListener();
@@ -81,15 +116,15 @@ async function init(config: QuickAuthConfig): Promise<void> {
 }
 
 /**
- * Tear the SDK down: end any auth attempt, stop auto-read, drop the cached
- * session token and forget the configuration. `isInitialized` is false
- * afterwards and `init()` must be called again.
- *
- * The persisted device token survives — a teardown is not a sign-out. Use
- * `QuickAuth.auth.reset({ forgetDevice: true })` for that.
+ * Tear down the SDK: ends any auth attempt, drops the session token and
+ * config. Call `init()` again afterwards. Keeps the device token; use
+ * `QuickAuth.auth.reset({ forgetDevice: true })` to sign out.
  */
 async function reset(): Promise<void> {
   await otpApi.reset();
+  // Queued attribution belongs to the torn-down session; the saved choice stays.
+  consentApi.clearQueue();
+  otpApi.invalidateDeviceTokenCache();
   __resetTokenManager();
   __resetConfig();
 }
@@ -98,17 +133,13 @@ const QuickAuth = {
   init,
   reset,
 
-  // These three are GETTERS, not methods, to match the Flutter and Web SDKs
-  // (`QuickAuth.isInitialized`, not `QuickAuth.isInitialized()`). As methods they
-  // were a silent trap: `if (QuickAuth.isInitialized)` is always truthy for a
-  // function, so the guard passes before init() has run and the failure surfaces
-  // somewhere else entirely.
+  // Getters, not methods, to match the Flutter and Web SDKs.
 
   /** Whether `init()` has run. */
   get isInitialized(): boolean {
     return isInitialised()
   },
-  /** @deprecated spelling kept for 1.x callers — use `isInitialized`. */
+  /** @deprecated Use `isInitialized`. */
   get isInitialised(): boolean {
     return isInitialised()
   },
@@ -118,21 +149,21 @@ const QuickAuth = {
     return getConfig()
   },
 
-  /** Session-token manager — exposed for tests and advanced flows. */
+  /** Session-token manager, for tests and advanced flows. */
   get tokenManager(): TokenManager {
     return getTokenManager()
   },
 
-  /**
-   * Replace the auth event handler after `init()` — for apps that attach it
-   * when a screen mounts rather than at startup.
-   */
+  /** Replace the auth event handler after `init()`. Pass `null` to detach. */
   setAuthEventHandler: (handler: AuthEventHandler | null): void =>
     setAuthEventHandler(handler),
 
   consent: {
-    set: (granted: boolean) => consentApi.set(granted),
-    get: () => consentApi.get(),
+    /** Saves the choice; granting replays queued attribution, revoking clears it. */
+    set: (granted: boolean): Promise<boolean> => consentApi.set(granted),
+    get: (): boolean => consentApi.get(),
+    /** Attribution calls waiting for consent. */
+    pendingCount: (): number => consentApi.pendingCount(),
   },
 
   auth: {
@@ -146,7 +177,7 @@ const QuickAuth = {
     observeOTP: (cb: OtpObserverCallback): OtpSubscription => otpApi.observeOTP(cb),
     startWhatsAppLogin: (p: WhatsAppLoginParams) => otpApi.startWhatsAppLogin(p),
     getSmsRetrieverHash: () => otpApi.getSmsRetrieverHash(),
-    /** One hash per signing certificate — apps with a rotated key have several. */
+    /** One hash per signing certificate (several if the key was rotated). */
     getSmsRetrieverHashes: () => otpApi.getSmsRetrieverHashes(),
   },
 
@@ -167,7 +198,9 @@ const QuickAuth = {
     trackConversion: (e: ConversionEvent) => trackApi.trackConversion(e),
     getFingerprint: (): DeviceFingerprint => fingerprint(),
     getFingerprintHash: (): string => fingerprintHash(fingerprint()),
-    getLastAttribution: (): AttributionPayload | null => captureApi.getLastAttribution(),
+    getLastAttribution: (): AttributionResult | null => captureApi.getLastAttribution(),
+    /** The stored `qa_clid`, if a campaign link carried one. */
+    qaClid: (): Promise<string | null> => captureApi.getQaClid(),
   },
 };
 

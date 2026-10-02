@@ -15,16 +15,12 @@ buildscript {
 
 apply plugin: 'com.android.library'
 
-// The SDK version has exactly one home: package.json. The npm publish workflow bumps it there
-// (npm version), src/version.ts is generated from it, ios/QuickAuthRnSdk.podspec parses it, and
-// this reads it — so an Android build can never report a version the JS half does not.
+// Version comes from package.json (single source of truth).
 def quickauthPackageJson = new JsonSlurper().parseText(file("${projectDir}/../package.json").text)
 def quickauthSdkVersion = quickauthPackageJson.version
 
 android {
-    // AGP 8 requires the namespace here. It used to *also* be declared as package="…" in
-    // src/main/AndroidManifest.xml, which AGP 8 rejects outright — that duplicate broke the
-    // build of every app consuming this package. The manifest no longer declares it.
+    // Don't also set package= in AndroidManifest.xml; AGP 8 rejects it.
     namespace 'io.quickauth.rnsdk'
     compileSdkVersion safeExtGet('compileSdkVersion', 34)
 
@@ -57,4 +53,6 @@ dependencies {
     implementation 'com.facebook.react:react-native:+'
     implementation 'com.google.android.gms:play-services-auth:21.0.0'
     implementation 'com.google.android.gms:play-services-auth-api-phone:18.0.2'
+
+    testImplementation 'junit:junit:4.13.2'
 }

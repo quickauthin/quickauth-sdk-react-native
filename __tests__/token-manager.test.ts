@@ -75,7 +75,6 @@ describe('core/client — TokenManager', () => {
     const tm = new TokenManager({ initialToken: null, mintUnsafeToken: async () => 'x' });
 
     const promises = Promise.all([tm.getToken(), tm.getToken(), tm.getToken()]);
-    // Provider has been called exactly once even though 3 callers waited.
     expect(provider).toHaveBeenCalledTimes(1);
     resolveProvider!(makeJwt(FUTURE()));
     const tokens = await promises;
@@ -254,15 +253,28 @@ describe('core/config validation', () => {
     __resetTokenManager();
   });
 
-  it('throws if no onTokenExpiry, no unsafe, no initialToken', () => {
-    expect(() => setConfig({})).toThrow(/onTokenExpiry/);
+  it('throws if no publishableKey, no onTokenExpiry, no unsafe', () => {
+    expect(() => setConfig({})).toThrow(/publishableKey.*onTokenExpiry.*unsafe/);
   });
 
-  it('accepts initialToken alone', () => {
-    expect(() => setConfig({ initialToken: makeJwt(FUTURE()) })).not.toThrow();
+  it('rejects initialToken alone (must have publishableKey, onTokenExpiry, or unsafe)', () => {
+    expect(() => setConfig({ initialToken: makeJwt(FUTURE()) })).toThrow(/publishableKey.*onTokenExpiry.*unsafe/);
+  });
+
+  it('accepts initialToken with publishableKey', () => {
+    expect(() => setConfig({ publishableKey: 'pk_test_abc', initialToken: makeJwt(FUTURE()) })).not.toThrow();
   });
 
   it('accepts onTokenExpiry alone', () => {
     expect(() => setConfig({ onTokenExpiry: async () => 'x' })).not.toThrow();
+  });
+
+  it('rejects multiple auth modes at once', () => {
+    expect(() =>
+      setConfig({
+        publishableKey: 'pk_test_abc',
+        onTokenExpiry: async () => 'x',
+      })
+    ).toThrow(/one auth mode/);
   });
 });

@@ -1,8 +1,9 @@
 /**
- * HTTP client — fetch wrapper with retries, idempotency keys, per-request
+ * HTTP client: fetch wrapper with retries, idempotency keys, per-request
  * timeouts via AbortController, and ephemeral session-token bearer auth.
  */
 
+import { appIdentityHeaders } from './app-identity';
 import { getConfig } from './config';
 import { SDK_PLATFORM, SDK_VERSION } from '../version';
 import type { TokenProvider } from '../types';
@@ -19,16 +20,36 @@ export interface RequestOptions {
   maxRetries?: number;
   /** Extra headers. */
   headers?: Record<string, string>;
-  /** Internal — set by retry path so we don't loop forever on 401. */
+  /** Internal. Set by the retry path so we don't loop on 401. */
   _retriedAfter401?: boolean;
 }
 
 export interface ApiError extends Error {
   status?: number;
   body?: unknown;
+  /** The backend's machine-readable reason (`errorCode`), e.g. `INVALID_CLIENT_CREDENTIALS`. */
+  errorCode?: string;
 }
 
-/** Refresh threshold — refresh if fewer than this many ms remain. */
+/**
+ * Build the error for a non-2xx response. The message is the backend's own
+ * when it sent one, so `ERROR` events say why ("Invalid OTP…") rather than
+ * just the status.
+ */
+export function httpError(status: number, statusText: string, body: unknown): ApiError {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const serverMessage = typeof b.message === 'string' && b.message ? b.message : null;
+  const errorCode =
+    typeof b.errorCode === 'string' ? b.errorCode : typeof b.code === 'string' ? b.code : undefined;
+  const err: ApiError = Object.assign(
+    new Error(`[QuickAuth] HTTP ${status}${serverMessage ? `: ${serverMessage}` : statusText ? ` ${statusText}` : ''}`),
+    { status, body }
+  );
+  if (errorCode) err.errorCode = errorCode;
+  return err;
+}
+
+/** Refresh if fewer than this many ms remain. */
 const REFRESH_LEEWAY_MS = 30_000;
 
 function genIdempotencyKey(): string {
@@ -96,7 +117,7 @@ export function getTokenExpiryMs(token: string): number | null {
   }
 }
 
-/** Manages the ephemeral session token — single-flight refresh + invalidate. */
+/** Manages the ephemeral session token: single-flight refresh + invalidate. */
 export class TokenManager {
   private token: string | null;
   private expiryMs: number | null;
@@ -117,7 +138,7 @@ export class TokenManager {
       return this.token;
     }
     if (this.token && this.expiryMs === null) {
-      // Token has no readable exp — trust it for one round-trip; refresh on 401.
+      // No readable exp: trust it for one round-trip, refresh on 401.
       return this.token;
     }
     return this.refresh();
@@ -200,10 +221,8 @@ async function mintUnsafeToken(): Promise<string> {
       }
     }
     if (!res.ok) {
-      const err: ApiError = Object.assign(
-        new Error(`[QuickAuth] /v1/sdk/session HTTP ${res.status}`),
-        { status: res.status, body: parsed }
-      );
+      const err = httpError(res.status, res.statusText, parsed);
+      err.message = `[QuickAuth] /v1/sdk/session ${err.message.replace('[QuickAuth] ', '')}`;
       throw err;
     }
     const out = parsed as { sessionToken?: string; session_token?: string } | null;
@@ -228,7 +247,7 @@ export function getTokenManager(): TokenManager {
   return tokenManager;
 }
 
-/** Test-only — drop the cached manager so the next call rebuilds it. */
+/** Test-only. Drop the cached manager so the next call rebuilds it. */
 export function __resetTokenManager(): void {
   tokenManager = null;
 }
@@ -240,17 +259,24 @@ export async function request<T = unknown>(opts: RequestOptions): Promise<T> {
   const timeoutMs = opts.timeoutMs ?? cfg.requestTimeoutMs;
   const maxRetries = opts.maxRetries ?? cfg.maxRetries;
 
-  const tm = getTokenManager();
-  const token = await tm.getToken();
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
-    Authorization: `Bearer ${token}`,
     'X-QuickAuth-SDK': SDK_PLATFORM,
     'X-QuickAuth-SDK-Version': SDK_VERSION,
     ...(opts.headers ?? {}),
   };
+
+  // In publishable key mode, send the key in header. Otherwise use bearer token.
+  if (cfg.publishableKey) {
+    headers['X-QuickAuth-Key'] = cfg.publishableKey;
+    // Backend locks a key to its registered app.
+    Object.assign(headers, appIdentityHeaders());
+  } else {
+    const tm = getTokenManager();
+    const token = await tm.getToken();
+    headers['Authorization'] = `Bearer ${token}`;
+  }
 
   if (method !== 'GET') {
     headers['Idempotency-Key'] = opts.idempotencyKey ?? genIdempotencyKey();
@@ -284,18 +310,15 @@ export async function request<T = unknown>(opts: RequestOptions): Promise<T> {
 
       if (res.ok) return parsed as T;
 
-      const err: ApiError = Object.assign(
-        new Error(`[QuickAuth] HTTP ${res.status} ${res.statusText || ''}`.trim()),
-        { status: res.status, body: parsed }
-      );
+      const err = httpError(res.status, res.statusText || '', parsed);
 
-      // 401 — invalidate token + retry once with a fresh one.
-      if (res.status === 401 && !opts._retriedAfter401) {
-        tm.invalidate();
+      // 401: invalidate token and retry once (session-token mode only).
+      if (res.status === 401 && !opts._retriedAfter401 && !cfg.publishableKey) {
+        getTokenManager().invalidate();
         return request<T>({ ...opts, _retriedAfter401: true });
       }
 
-      // 4xx — don't retry except 408 / 429
+      // 4xx: don't retry except 408 / 429
       if (res.status < 500 && res.status !== 408 && res.status !== 429) throw err;
       lastErr = err;
     } catch (e) {

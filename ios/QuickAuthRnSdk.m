@@ -8,8 +8,19 @@ RCT_EXPORT_MODULE(QuickAuthSmsRetriever);
   return NO;
 }
 
-// iOS uses TextInput textContentType="oneTimeCode" for autofill — these are
-// no-op stubs so the JS bridge layer can call them uniformly across platforms.
+// bundleId is sent as X-QuickAuth-Bundle; version fields go in deviceInfo.
+- (NSDictionary *)constantsToExport {
+  NSBundle *bundle = [NSBundle mainBundle];
+  NSMutableDictionary *constants = [NSMutableDictionary dictionary];
+  if (bundle.bundleIdentifier) constants[@"bundleId"] = bundle.bundleIdentifier;
+  NSString *version = bundle.infoDictionary[@"CFBundleShortVersionString"];
+  NSString *build = bundle.infoDictionary[@"CFBundleVersion"];
+  if (version) constants[@"appVersion"] = version;
+  if (build) constants[@"appBuild"] = build;
+  return constants;
+}
+
+// No-op stubs; iOS autofill uses textContentType="oneTimeCode".
 
 RCT_EXPORT_METHOD(start:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject) {
